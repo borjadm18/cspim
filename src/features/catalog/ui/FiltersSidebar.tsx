@@ -37,7 +37,6 @@ type CategoryItem = {
 const TYPE_TILES = [
   { id: 'single', label: 'Simple' },
   { id: 'variant', label: 'Con acabados' },
-  { id: 'group', label: 'Grupo' },
   { id: 'bundle', label: 'Bundle' },
 ];
 
