@@ -95,7 +95,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-h-[2.75rem] flex-wrap gap-2">
           <span className="rounded-[10px] border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--catalog-accent)]">
             {primaryCategory}
           </span>
