@@ -8,15 +8,23 @@ import { ProductModal } from '../features/catalog/ui/ProductModal';
 import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
 import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
 import { useCatalog } from '../features/catalog/state/useCatalog';
+import { useAuth } from '../hooks/useAuth';
 import type { QuickFilter } from '../features/catalog/model/catalogTypes';
 import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
 import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
 import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
 function App() {
+  const { profile } = useAuth();
   const currentUserRole =
-    (import.meta.env.VITE_CATALOG_USER_ROLE as 'admin' | 'content_manager' | 'commercial' | undefined) ??
-    (CATALOG_ACCESS_MODE === 'client' ? 'commercial' : 'admin');
+    profile?.role === 'superadmin' || profile?.role === 'admin'
+      ? 'admin'
+      : profile?.role === 'content_manager'
+        ? 'content_manager'
+        : profile?.role === 'comercial'
+          ? 'commercial'
+          : (import.meta.env.VITE_CATALOG_USER_ROLE as 'admin' | 'content_manager' | 'commercial' | undefined) ??
+            (CATALOG_ACCESS_MODE === 'client' ? 'commercial' : 'admin');
   const {
     products,
     loading,
