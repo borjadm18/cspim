@@ -72,7 +72,7 @@ const normalizeText = (value: unknown) => cleanText(value).trim();
 
 const formatValue = (value: unknown): string => {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'boolean') return value ? 'SÃ­' : 'No';
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') return cleanText(value);
   if (Array.isArray(value)) return value.map(item => formatValue(item)).filter(Boolean).join(', ');
@@ -223,7 +223,7 @@ const parseBooleanValue = (value: unknown): boolean | undefined => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
     if (!normalized) return undefined;
-    if (['true', '1', 'yes', 'si', 'sÃ­', 'visible', 'activo'].includes(normalized)) return true;
+    if (['true', '1', 'yes', 'si', 'sí', 'visible', 'activo'].includes(normalized)) return true;
     if (['false', '0', 'no', 'oculto', 'inactivo'].includes(normalized)) return false;
   }
   return undefined;
@@ -298,7 +298,7 @@ const EditableLabel = ({ children, required = false }: { children: string; requi
   </p>
 );
 
-const PlaceholderPanel = ({ text = 'SecciÃ³n en desarrollo' }: { text?: string }) => (
+const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }) => (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
     {text}
   </div>
@@ -373,8 +373,8 @@ export function ProductModal({
     const ean = firstAvailableText(
       product,
       attributeLookup,
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'cÃ³digo ean', 'codigo ean'],
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'cÃ³digo ean', 'codigo ean']
+      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
+      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean']
     );
     const baseRef = firstAvailableText(
       product,
@@ -390,9 +390,9 @@ export function ProductModal({
     );
     const price = firstAvailableNumber(product, attributeLookup, ['price', 'precio', 'pvp'], ['precio', 'pvp']);
     const weight = firstAvailableText(product, attributeLookup, ['weight', 'peso', 'peso (kg)'], ['peso', 'peso (kg)']);
-    const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colecciÃ³n'], ['collection', 'coleccion', 'colecciÃ³n']);
+    const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colección'], ['collection', 'coleccion', 'colección']);
     const range = firstAvailableText(product, attributeLookup, ['range', 'gama'], ['range', 'gama']);
-    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|tÃ©cnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
+    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|técnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
 
     return {
       ean,
@@ -454,7 +454,7 @@ export function ProductModal({
   const currentImageFileName = currentImage?.alt || `${productName || 'imagen'}.jpg`;
   const lastUpdate = formatDate((product as any).lastUpdate || (product as any).updatedAt || (product as any).createDate);
   const updatedBy = cleanText((product as any).updatedBy || (product as any).lastUpdatedBy || (product as any).authorEmail || 'admin@demo.com');
-  const shortId = cleanText(product.id).slice(0, 12) + (cleanText(product.id).length > 12 ? 'â€¦' : '');
+  const shortId = cleanText(product.id).slice(0, 12) + (cleanText(product.id).length > 12 ? '…' : '');
 
   const requiredFieldState = [
     { label: 'EAN', value: draft.ean },
@@ -565,7 +565,7 @@ export function ProductModal({
       <input
         type={opts?.type || 'text'}
         value={value}
-        placeholder={opts?.placeholder || 'â€”'}
+        placeholder={opts?.placeholder || '—'}
         onChange={event => onChange(event.currentTarget.value)}
         className="mt-2 w-full border-b border-dashed border-slate-300 bg-transparent pb-1 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-800 focus:border-slate-800"
       />
@@ -690,9 +690,9 @@ export function ProductModal({
             )}
 
             {isGroupProduct && variants.length > 1 ? (
-              <div className="mt-2 flex items-center gap-2 rounded-sm border border-gray-200 bg-white px-3 py-2 text-xs">
-                <div className="pr-2 text-[10px] uppercase tracking-wide text-gray-400">Acabado</div>
-                <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
+              <div className="mt-2 flex items-center gap-3 rounded-sm border border-gray-200 bg-white px-4 py-2.5 text-xs">
+                <div className="pr-2 text-[11px] uppercase tracking-wide text-gray-400">Acabado</div>
+                <div className="flex items-center gap-2 border-l border-gray-200 pl-3">
                   {(() => {
                     const visibleVariants = variants.length > 6 ? variants.slice(0, 5) : variants.slice(0, 6);
                     const overflowCount = variants.length > 6 ? variants.length - 5 : 0;
@@ -711,7 +711,7 @@ export function ProductModal({
                                 setActiveVariantIndex(index);
                                 setCurrentImageIndex(0);
                               }}
-                              className={`h-4 w-4 rounded-sm border border-transparent transition ${
+                              className={`h-5 w-5 rounded-sm border border-transparent transition ${
                                 isActive ? 'border-[color:var(--catalog-accent)] ring-1 ring-[color:var(--catalog-accent)]' : ''
                               }`}
                               style={{ backgroundColor: color || '#C8C8C8' }}
@@ -719,13 +719,13 @@ export function ProductModal({
                           );
                         })}
                         {overflowCount > 0 ? (
-                          <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-400">+{overflowCount}</span>
+                          <span className="rounded-sm bg-gray-100 px-2 py-0.5 text-[11px] text-gray-400">+{overflowCount}</span>
                         ) : null}
                       </>
                     );
                   })()}
                 </div>
-                <div className="min-w-0 border-l border-gray-200 pl-2 text-xs font-medium text-gray-900">
+                <div className="min-w-0 border-l border-gray-200 pl-3 text-sm font-medium text-gray-900">
                   {cleanText(getVariantFinishLabel(activeVariant) || activeVariant?.sku || '') || '—'}
                 </div>
               </div>
@@ -944,7 +944,7 @@ export function ProductModal({
             className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
           >
             <Plus className="h-4 w-4" />
-            AÃ±adir acabado
+            Añadir acabado
           </button>
         </div>
 
@@ -964,7 +964,7 @@ export function ProductModal({
               </thead>
               <tbody>
                 {variants.map((variant: any, index: number) => {
-                  const variantSku = cleanText(variant.sku || variant.number || variant.id || 'â€”');
+                  const variantSku = cleanText(variant.sku || variant.number || variant.id || '—');
                   const finishLabel = getVariantFinishLabel(variant) || `Acabado ${index + 1}`;
                   const finishColor = getVariantSwatchColor(variant, index);
                   const variantEan = cleanText(
@@ -979,11 +979,11 @@ export function ProductModal({
                   const variantWeightRaw = variant.weight ?? variant.attributes?.weight ?? variant.attributes?.peso;
                   const variantPrice =
                     variantPriceRaw === null || variantPriceRaw === undefined || String(variantPriceRaw).trim() === ''
-                      ? 'â€”'
+                      ? '—'
                       : formatValue(variantPriceRaw);
                   const variantWeight =
                     variantWeightRaw === null || variantWeightRaw === undefined || String(variantWeightRaw).trim() === ''
-                      ? 'â€”'
+                      ? '—'
                       : formatValue(variantWeightRaw);
                   const variantStatus = STATUS_META[getProductStatus(variant as Product)];
                   const isCurrentVariant = activeVariantId === variant.id;
@@ -1013,7 +1013,7 @@ export function ProductModal({
                           <Copy className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
                         </button>
                       </td>
-                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantEan || 'â€”'}</td>
+                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantEan || '—'}</td>
                       <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantPrice}</td>
                       <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantWeight}</td>
                       <td className="px-4 py-3 align-middle">
@@ -1048,7 +1048,7 @@ export function ProductModal({
               className="mt-4 inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
             >
               <Plus className="h-4 w-4" />
-            AÃ±adir acabado
+            Añadir acabado
             </button>
           </div>
         )}
@@ -1076,7 +1076,7 @@ export function ProductModal({
                 onClick={() => onNavigateBreadcrumb?.('catalog')}
                 className="truncate font-medium text-slate-700 transition hover:text-slate-900"
               >
-                CatÃ¡logo
+                Catálogo
               </button>
               <ChevronRight className="h-4 w-4 text-slate-300" />
               <button
@@ -1084,7 +1084,7 @@ export function ProductModal({
                 onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
                 className="truncate font-medium text-slate-700 transition hover:text-slate-900"
               >
-                {primaryCategory || 'Sin categorÃ­a'}
+                {primaryCategory || 'Sin categoría'}
               </button>
               {isVariantProduct && parentProduct ? (
                 <>
@@ -1181,7 +1181,7 @@ export function ProductModal({
                   {productName}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> Â· ID:{' '}
+                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID:{' '}
                   <span className="font-mono text-slate-600">{shortId}</span>
                 </p>
               </div>
@@ -1207,7 +1207,7 @@ export function ProductModal({
                 </span>
               )}
                 <p className="text-xs text-slate-500">
-                  Actualizado {lastUpdate || 'â€”'} Â· {updatedBy}
+                  Actualizado {lastUpdate || '—'} · {updatedBy}
                 </p>
               </div>
             </div>
@@ -1220,9 +1220,9 @@ export function ProductModal({
                 </div>
                 <span className="text-xs font-medium text-green-700">{completenessLabel}</span>
                 {missingFields.length > 0 ? (
-                  <span className="text-xs text-red-600">Â· Falta: {missingFields.join(', ')}</span>
+                  <span className="text-xs text-red-600">· Falta: {missingFields.join(', ')}</span>
                 ) : (
-                  <span className="text-xs text-slate-500">â€¢ Todo completo</span>
+                  <span className="text-xs text-slate-500">• Todo completo</span>
                 )}
               </div>
             </div>
