@@ -1,0 +1,352 @@
+import { useState } from 'react';
+import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
+import { LoadingSpinner } from '../shared/ui/LoadingSpinner';
+import { ErrorMessage } from '../shared/ui/ErrorMessage';
+import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
+import { ProductCard } from '../features/catalog/ui/ProductCard';
+import { ProductModal } from '../features/catalog/ui/ProductModal';
+import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
+import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
+import { useCatalog } from '../features/catalog/state/useCatalog';
+import type { QuickFilter } from '../features/catalog/model/catalogTypes';
+import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
+import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
+import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
+
+function App() {
+  const currentUserRole =
+    (import.meta.env.VITE_CATALOG_USER_ROLE as 'admin' | 'content_manager' | 'commercial' | undefined) ??
+    (CATALOG_ACCESS_MODE === 'client' ? 'commercial' : 'admin');
+  const {
+    products,
+    loading,
+    error,
+    selectedTenantId,
+    setSelectedTenantId,
+    tenantOptions,
+    selectedProduct,
+    setSelectedProduct,
+    searchTerm,
+    selectedName,
+    selectedNumber,
+    setSearchTerm,
+    setSelectedName,
+    setSelectedNumber,
+    selectedBrand,
+    setSelectedBrand,
+    selectedCategory,
+    setSelectedCategory,
+    selectedType,
+    setSelectedType,
+    selectedStatus,
+    setSelectedStatus,
+    selectedMediaFilter,
+    setSelectedMediaFilter,
+    selectedQuickFilter,
+    setSelectedQuickFilter,
+    currentPage,
+    setCurrentPage,
+    isSettingsOpen,
+    setIsSettingsOpen,
+    brandOptions,
+    categoryOptions,
+    categoryTree,
+    categoryLabelMap,
+    typeOptions,
+    statusOptions,
+    displayProducts,
+    handleClearFilters,
+    totalPages,
+    paginatedProducts,
+    imageCount,
+    attachmentCount,
+    assetCount,
+    withImagesCount,
+    reloadProducts,
+    settings,
+    setSettings,
+    savedViews,
+    savedViewName,
+    setSavedViewName,
+    saveCurrentView,
+    applySavedView,
+    deleteSavedView,
+    restoreDefaultSettings,
+    activeSavedView,
+    shareableLink,
+    shareMessage,
+    shareError,
+    copyShareableLink,
+    recentSearches,
+    commitSearchTerm,
+    clearRecentSearches,
+    updateProduct,
+  } = useCatalog();
+  const [activeLocale, setActiveLocale] = useState('ES');
+  const visibleCatalogCount = products.filter(product => normalizeKey(product.type) !== 'variant').length;
+  const selectedDisplayProductId = selectedProduct?.variantParentId || selectedProduct?.id || '';
+  const selectedProductIndex = selectedProduct
+    ? displayProducts.findIndex(product => product.id === selectedDisplayProductId)
+    : -1;
+  const handlePrevProduct = () => {
+    if (selectedProductIndex <= 0) return;
+    setSelectedProduct(displayProducts[selectedProductIndex - 1] || null);
+  };
+  const handleNextProduct = () => {
+    if (selectedProductIndex < 0 || selectedProductIndex >= displayProducts.length - 1) return;
+    setSelectedProduct(displayProducts[selectedProductIndex + 1] || null);
+  };
+  const handleSaveProduct = (patch: Record<string, unknown>) => {
+    if (!selectedProduct) return;
+    updateProduct(selectedProduct.id, patch as any);
+  };
+
+  const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
+  const theme = resolveCatalogTheme(settings.paletteId);
+  const appStyle = {
+    '--catalog-accent': theme.accent,
+    '--catalog-accent-strong': theme.accentStrong,
+    '--catalog-accent-soft': theme.accentSoft,
+    '--catalog-accent-ink': theme.accentInk,
+    '--catalog-page-start': theme.pageStart,
+    '--catalog-page-end': theme.pageEnd,
+  } as React.CSSProperties;
+
+  const handleStatFilterClick = (filter: 'images' | 'attachments' | 'images-only' | 'categories' | 'assets') => {
+    if (filter === 'images-only') {
+      setSelectedQuickFilter('all');
+      setSelectedMediaFilter(selectedMediaFilter === 'images-only' ? 'all' : 'images-only');
+      return;
+    }
+
+    const nextQuickFilter: QuickFilter = filter === 'images'
+      ? 'images'
+      : filter === 'attachments'
+        ? 'attachments'
+        : filter === 'categories'
+          ? 'categories'
+          : 'assets';
+
+    const isActive =
+      (nextQuickFilter === 'images' && selectedQuickFilter === 'images') ||
+      (nextQuickFilter === 'attachments' && selectedQuickFilter === 'attachments') ||
+      (nextQuickFilter === 'categories' && selectedQuickFilter === 'categories') ||
+      (nextQuickFilter === 'assets' && selectedQuickFilter === 'assets');
+
+    setSelectedMediaFilter('all');
+    setSelectedQuickFilter(isActive ? 'all' : nextQuickFilter);
+  };
+
+  return (
+    <div
+      className="min-h-screen bg-[linear-gradient(180deg,var(--catalog-page-start)_0%,var(--catalog-page-end)_100%)] text-slate-900"
+      style={appStyle}
+    >
+      <CatalogHeader
+        searchTerm={searchTerm}
+        onSearchTermChange={setSearchTerm}
+        onSearchSubmit={commitSearchTerm}
+        recentSearches={recentSearches}
+        onRecentSearchSelect={commitSearchTerm}
+        onClearRecentSearches={clearRecentSearches}
+        productsCount={visibleCatalogCount}
+        filteredCount={displayProducts.length}
+        imageCount={imageCount}
+        attachmentCount={attachmentCount}
+        withImagesCount={withImagesCount}
+        categoryCount={categoryOptions.length}
+        assetCount={assetCount}
+        activeViewName={activeSavedView?.name ?? null}
+        logoUrl={settings.logoUrl}
+        tenantOptions={tenantOptions}
+        selectedTenantId={selectedTenantId}
+        accessMode={CATALOG_ACCESS_MODE}
+        onTenantChange={setSelectedTenantId}
+        selectedQuickFilter={selectedQuickFilter}
+        selectedMediaFilter={selectedMediaFilter}
+        onStatFilterClick={handleStatFilterClick}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+      />
+
+      <main className="w-full px-4 py-4 sm:px-6 sm:py-6 xl:px-8">
+        {loading ? (
+          <LoadingSpinner />
+        ) : error ? (
+          <ErrorMessage message={error} onRetry={reloadProducts} />
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[clamp(300px,20vw,360px)_minmax(0,1fr)]">
+            <aside className="hidden lg:block">
+              <FiltersSidebar
+                products={products}
+                brandOptions={brandOptions}
+                selectedBrand={selectedBrand}
+                onBrandChange={setSelectedBrand}
+                categoryTree={categoryTree}
+                selectedCategory={selectedCategory}
+                onCategoryChange={setSelectedCategory}
+                typeOptions={typeOptions}
+                selectedType={selectedType}
+                onTypeChange={setSelectedType}
+                statusOptions={statusOptions}
+                selectedStatus={selectedStatus}
+                onStatusChange={setSelectedStatus}
+                selectedMediaFilter={selectedMediaFilter}
+                onMediaFilterChange={setSelectedMediaFilter}
+                selectedName={selectedName}
+                onNameChange={setSelectedName}
+                selectedNumber={selectedNumber}
+                onNumberChange={setSelectedNumber}
+                onClearFilters={handleClearFilters}
+              />
+            </aside>
+
+            <section className="min-w-0">
+              {displayProducts.length === 0 ? (
+                <div className="rounded-[28px] border border-slate-200 bg-white px-8 py-16 text-center shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
+                  <div className="mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-full bg-slate-100">
+                    <Package className="h-10 w-10 text-slate-400" />
+                  </div>
+                  <h3 className="mb-2 text-xl font-semibold text-slate-900">No se encontraron productos</h3>
+                  <p className="text-slate-600">
+                    {searchTerm ||
+                    selectedName ||
+                    selectedNumber ||
+                    selectedBrand !== 'all' ||
+                    selectedCategory !== 'all' ||
+                    selectedType !== 'all' ||
+                    selectedStatus !== 'all' ||
+                    selectedMediaFilter !== 'all'
+                      ? 'Intenta ajustar la búsqueda o limpiar los filtros activos.'
+                      : 'No hay productos disponibles en este momento.'}
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div className={`grid grid-cols-1 ${gridGapClass} md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
+                    {paginatedProducts.map(product => (
+                      <ProductCard
+                        key={product.id}
+                        product={product}
+                        categoryLabelMap={categoryLabelMap}
+                        onViewDetails={setSelectedProduct}
+                      />
+                    ))}
+                  </div>
+
+                  {totalPages > 1 && (
+                    <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
+                        disabled={currentPage === 1}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Anterior
+                      </button>
+
+                      <div className="flex items-center gap-1">
+                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => {
+                          const visible =
+                            page === 1 || page === totalPages || (page >= currentPage - 2 && page <= currentPage + 2);
+                          if (!visible) return null;
+
+                          return (
+                            <button
+                              key={page}
+                              onClick={() => setCurrentPage(page)}
+                              className={`rounded-xl px-4 py-2.5 text-sm font-medium transition ${
+                              currentPage === page
+                                  ? 'bg-[var(--catalog-accent)] text-white shadow-[0_8px_18px_rgba(20,61,107,0.22)]'
+                                  : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <button
+                        onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
+                        disabled={currentPage === totalPages}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Siguiente
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+          </div>
+        )}
+      </main>
+
+      {selectedProduct && (
+        <ProductModal
+          product={selectedProduct}
+          categoryLabelMap={categoryLabelMap}
+          onClose={() => setSelectedProduct(null)}
+          onPrev={selectedProductIndex > 0 ? handlePrevProduct : undefined}
+          onNext={selectedProductIndex >= 0 && selectedProductIndex < displayProducts.length - 1 ? handleNextProduct : undefined}
+          activeLocale={activeLocale}
+          onLocaleChange={setActiveLocale}
+          onSave={handleSaveProduct}
+          parentProduct={
+            selectedProduct?.variantParentId
+              ? products.find(product => product.id === selectedProduct.variantParentId) || null
+              : null
+          }
+          currentUserRole={currentUserRole}
+          onAddVariant={() => {
+            if (!selectedProduct) return;
+            const parent = selectedProduct?.variantParentId
+              ? products.find(product => product.id === selectedProduct.variantParentId)
+              : selectedProduct;
+            if (parent) setSelectedProduct(parent);
+          }}
+          onNavigateBreadcrumb={(segment, value) => {
+            if (segment === 'catalog') {
+              setSelectedProduct(null);
+              return;
+            }
+
+            if (segment === 'category' && value) {
+              setSelectedCategory(value);
+              setSelectedProduct(null);
+              return;
+            }
+
+            if (segment === 'product' && value) {
+              const target = products.find(product => product.id === value) || selectedProduct?.variants?.find((variant: any) => variant.id === value);
+              if (target) {
+                setSelectedProduct(target);
+              }
+            }
+          }}
+        />
+      )}
+
+      <CatalogSettingsModal
+        open={isSettingsOpen}
+        settings={settings}
+        onChange={setSettings}
+        onClose={() => setIsSettingsOpen(false)}
+        onReset={restoreDefaultSettings}
+        savedViews={savedViews}
+        savedViewName={savedViewName}
+        onSavedViewNameChange={setSavedViewName}
+        onSaveView={saveCurrentView}
+        onApplyView={applySavedView}
+        onDeleteView={deleteSavedView}
+        onCopyCurrentViewLink={copyShareableLink}
+        shareableLink={shareableLink}
+        shareMessage={shareMessage}
+        shareError={shareError}
+      />
+    </div>
+  );
+}
+
+export default App;
