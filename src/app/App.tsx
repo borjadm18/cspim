@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { LoadingSpinner } from '../shared/ui/LoadingSpinner';
 import { ErrorMessage } from '../shared/ui/ErrorMessage';
 import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
@@ -10,11 +11,12 @@ import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModa
 import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
 import type { QuickFilter } from '../features/catalog/model/catalogTypes';
+import LoginPage from '../pages/LoginPage';
 import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
 import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
 import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
-function App() {
+function CatalogPage() {
   const { profile } = useAuth();
   const currentUserRole =
     profile?.role === 'superadmin' || profile?.role === 'admin'
@@ -354,6 +356,42 @@ function App() {
         shareError={shareError}
       />
     </div>
+  );
+}
+
+function PrivateRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[linear-gradient(180deg,var(--catalog-page-start)_0%,var(--catalog-page-end)_100%)] text-slate-900">
+        <LoadingSpinner />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+}
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="*"
+          element={
+            <PrivateRoute>
+              <CatalogPage />
+            </PrivateRoute>
+          }
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
