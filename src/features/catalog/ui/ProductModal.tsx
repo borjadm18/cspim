@@ -72,7 +72,7 @@ const normalizeText = (value: unknown) => cleanText(value).trim();
 
 const formatValue = (value: unknown): string => {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
+  if (typeof value === 'boolean') return value ? 'SÃ­' : 'No';
   if (typeof value === 'number') return String(value);
   if (typeof value === 'string') return cleanText(value);
   if (Array.isArray(value)) return value.map(item => formatValue(item)).filter(Boolean).join(', ');
@@ -223,7 +223,7 @@ const parseBooleanValue = (value: unknown): boolean | undefined => {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
     if (!normalized) return undefined;
-    if (['true', '1', 'yes', 'si', 'sí', 'visible', 'activo'].includes(normalized)) return true;
+    if (['true', '1', 'yes', 'si', 'sÃ­', 'visible', 'activo'].includes(normalized)) return true;
     if (['false', '0', 'no', 'oculto', 'inactivo'].includes(normalized)) return false;
   }
   return undefined;
@@ -298,7 +298,7 @@ const EditableLabel = ({ children, required = false }: { children: string; requi
   </p>
 );
 
-const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }) => (
+const PlaceholderPanel = ({ text = 'SecciÃ³n en desarrollo' }: { text?: string }) => (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
     {text}
   </div>
@@ -373,8 +373,8 @@ export function ProductModal({
     const ean = firstAvailableText(
       product,
       attributeLookup,
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean']
+      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'cÃ³digo ean', 'codigo ean'],
+      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'cÃ³digo ean', 'codigo ean']
     );
     const baseRef = firstAvailableText(
       product,
@@ -390,9 +390,9 @@ export function ProductModal({
     );
     const price = firstAvailableNumber(product, attributeLookup, ['price', 'precio', 'pvp'], ['precio', 'pvp']);
     const weight = firstAvailableText(product, attributeLookup, ['weight', 'peso', 'peso (kg)'], ['peso', 'peso (kg)']);
-    const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colección'], ['collection', 'coleccion', 'colección']);
+    const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colecciÃ³n'], ['collection', 'coleccion', 'colecciÃ³n']);
     const range = firstAvailableText(product, attributeLookup, ['range', 'gama'], ['range', 'gama']);
-    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|técnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
+    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|tÃ©cnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
 
     return {
       ean,
@@ -454,7 +454,7 @@ export function ProductModal({
   const currentImageFileName = currentImage?.alt || `${productName || 'imagen'}.jpg`;
   const lastUpdate = formatDate((product as any).lastUpdate || (product as any).updatedAt || (product as any).createDate);
   const updatedBy = cleanText((product as any).updatedBy || (product as any).lastUpdatedBy || (product as any).authorEmail || 'admin@demo.com');
-  const shortId = cleanText(product.id).slice(0, 12) + (cleanText(product.id).length > 12 ? '…' : '');
+  const shortId = cleanText(product.id).slice(0, 12) + (cleanText(product.id).length > 12 ? 'â€¦' : '');
 
   const requiredFieldState = [
     { label: 'EAN', value: draft.ean },
@@ -464,7 +464,7 @@ export function ProductModal({
       value: draft.visibleOnWeb === undefined || draft.visibleOnWeb === null ? '' : 'present',
     },
     {
-      label: 'Precio (€)',
+      label: 'Precio (â‚¬)',
       value: draft.price.trim() && !Number.isNaN(Number(draft.price.replace(',', '.'))) ? draft.price : '',
     },
   ];
@@ -565,7 +565,7 @@ export function ProductModal({
       <input
         type={opts?.type || 'text'}
         value={value}
-        placeholder={opts?.placeholder || '—'}
+        placeholder={opts?.placeholder || 'â€”'}
         onChange={event => onChange(event.currentTarget.value)}
         className="mt-2 w-full border-b border-dashed border-slate-300 bg-transparent pb-1 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-800 focus:border-slate-800"
       />
@@ -594,345 +594,343 @@ export function ProductModal({
   );
 
   const contentPanel = (
-    <div className="grid gap-0 xl:grid-cols-2">
-      <section className="border-r border-slate-200 bg-slate-50 px-5 py-5">
-        <div className="space-y-4">
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Imágenes</p>
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section className="space-y-4 border-r border-slate-200 bg-slate-50 px-5 py-5">
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Imágenes</p>
+            <button
+              type="button"
+              onClick={onAddImage}
+              className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
+            >
+              + Añadir
+            </button>
+          </div>
+
+          <div className="relative overflow-hidden rounded-[22px] border border-slate-100 bg-slate-50">
+            <div className="group/image relative flex min-h-[500px] aspect-[4/3] items-center justify-center bg-gradient-to-b from-white to-slate-50 p-3">
+              <img
+                src={currentImageUrl}
+                alt={productName}
+                className="max-h-full max-w-full object-contain"
+                onError={event => {
+                  (event.target as HTMLImageElement).src = fallbackImage(productName);
+                }}
+              />
+
               <button
                 type="button"
-                onClick={onAddImage}
-                className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
+                onClick={() => void triggerDownload(currentImage?.downloadUrl || currentImage?.url, currentImageFileName)}
+                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 opacity-0 shadow-sm transition hover:bg-white group-hover/image:opacity-100"
+                aria-label="Descargar imagen"
               >
-                + Añadir
+                <Download className="h-3.5 w-3.5" />
               </button>
-            </div>
-
-            <div className="relative overflow-hidden rounded-[22px] border border-slate-100 bg-slate-50">
-              <div className="group/image relative flex min-h-[440px] aspect-[4/3] items-center justify-center bg-gradient-to-b from-white to-slate-50 p-2">
-                <img
-                  src={currentImageUrl}
-                  alt={productName}
-                  className="max-h-full max-w-full object-contain"
-                  onError={event => {
-                    (event.target as HTMLImageElement).src = fallbackImage(productName);
-                  }}
-                />
-
-                <button
-                  type="button"
-                  onClick={() => void triggerDownload(currentImage?.downloadUrl || currentImage?.url, currentImageFileName)}
-                  className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 opacity-0 shadow-sm transition hover:bg-white group-hover/image:opacity-100"
-                  aria-label="Descargar imagen"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </button>
-
-                {imageSet.length > 1 && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setCurrentImageIndex(prev => (prev - 1 + imageSet.length) % imageSet.length)}
-                      className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
-                      aria-label="Imagen anterior"
-                    >
-                      <ChevronLeft className="h-5 w-5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCurrentImageIndex(prev => (prev + 1) % imageSet.length)}
-                      className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
-                      aria-label="Imagen siguiente"
-                    >
-                      <ChevronRight className="h-5 w-5" />
-                    </button>
-                    <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 shadow-sm">
-                      {currentImageIndex + 1} / {imageSet.length}
-                    </div>
-                  </>
-                )}
-              </div>
 
               {imageSet.length > 1 && (
-                <div className="border-t border-slate-100 bg-white p-4">
-                  <div className="flex flex-wrap gap-2">
-                    {imageSet.map((image: ProductImage, index: number) => (
-                      <button
-                        type="button"
-                        key={image.id || image.url || index}
-                        onClick={() => setCurrentImageIndex(index)}
-                      className={`flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-xl border bg-slate-50 p-1 transition ${
-                          currentImageIndex === index
-                            ? 'border-[color:var(--catalog-accent)] ring-2 ring-[color:var(--catalog-accent-soft)]/70'
-                            : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <img
-                          src={image.url}
-                          alt={image.alt || `${productName} ${index + 1}`}
-                          className="h-full w-full object-contain"
-                          onError={event => {
-                            (event.target as HTMLImageElement).src = fallbackImage(productName);
-                          }}
-                        />
-                      </button>
-                    ))}
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentImageIndex(prev => (prev - 1 + imageSet.length) % imageSet.length)}
+                    className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
+                    aria-label="Imagen anterior"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentImageIndex(prev => (prev + 1) % imageSet.length)}
+                    className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
+                    aria-label="Imagen siguiente"
+                  >
+                    <ChevronRight className="h-5 w-5" />
+                  </button>
+                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 shadow-sm">
+                    {currentImageIndex + 1} / {imageSet.length}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {imageSet.length > 1 && (
+              <div className="border-t border-slate-100 bg-white p-4">
+                <div className="flex flex-wrap gap-2">
+                  {imageSet.map((image: ProductImage, index: number) => (
                     <button
                       type="button"
-                      onClick={onAddImage}
-                      className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-slate-400 transition hover:border-slate-400 hover:text-slate-600"
-                      aria-label="Añadir imagen"
-                    >
-                      <Plus className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {isGroupProduct && variants.length > 1 ? (
-                <div className="mt-2 flex items-center gap-2 rounded-sm border border-gray-200 bg-white px-3 py-2 text-xs">
-                  <div className="pr-2 text-[10px] uppercase tracking-wide text-gray-400">Acabado</div>
-                  <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
-                    {(() => {
-                      const visibleVariants = variants.length > 6 ? variants.slice(0, 5) : variants.slice(0, 6);
-                      const overflowCount = variants.length > 6 ? variants.length - 5 : 0;
-                      return (
-                        <>
-                          {visibleVariants.map((variant: any, index: number) => {
-                            const isActive = activeVariantIndex === index;
-                            const label = getVariantFinishLabel(variant) || cleanText(variant.sku || variant.number || variant.id || `Acabado ${index + 1}`);
-                            const color = getVariantSwatchColor(variant, index);
-                            return (
-                              <button
-                                key={variant.id || variant.number || index}
-                                type="button"
-                                title={label}
-                                onClick={() => {
-                                  setActiveVariantIndex(index);
-                                  setCurrentImageIndex(0);
-                                }}
-                                className={`h-4 w-4 rounded-sm border border-transparent transition ${
-                                  isActive ? 'border-[color:var(--catalog-accent)] ring-1 ring-[color:var(--catalog-accent)]' : ''
-                                }`}
-                                style={{ backgroundColor: color || '#C8C8C8' }}
-                              />
-                            );
-                          })}
-                          {overflowCount > 0 ? (
-                            <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-400">+{overflowCount}</span>
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="min-w-0 border-l border-gray-200 pl-2 text-xs font-medium text-gray-900">
-                    {cleanText(getVariantFinishLabel(activeVariant) || activeVariant?.sku || '') || '—'}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos</p>
-              <button
-                type="button"
-                onClick={onAddDocument}
-                className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
-              >
-                + Añadir
-              </button>
-            </div>
-
-            {attachments.length > 0 ? (
-              <div className="space-y-3">
-                {attachments.map((attachment: any, index: number) => {
-                  const attachmentName = normalizeAttachmentName(attachment);
-                  const fileName = resolveFileName(attachment.downloadUrl || attachment.url || '', attachmentName);
-                  const actionLabel = String(attachment.type || '').toLowerCase().includes('pdf') || fileName.toLowerCase().endsWith('.pdf')
-                    ? 'Descargar PDF'
-                    : 'Descargar';
-
-                  return (
-                    <div
-                      key={attachment.id || attachment.url || index}
-                      className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
-                    >
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d90429] text-white">
-                        <FileText className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-900">{attachmentName}</p>
-                        <p className="mt-0.5 text-xs uppercase tracking-[0.18em] text-slate-500">
-                          {cleanText(attachment.type || 'Documento')}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void triggerDownload(attachment.downloadUrl || attachment.url, fileName)}
-                        className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        {actionLabel}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={onAddDocument}
-                className="flex min-h-[120px] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition hover:border-slate-400 hover:bg-slate-100"
-              >
-                <Upload className="mb-3 h-7 w-7 text-slate-400" />
-                <span className="text-sm font-medium text-slate-900">Añadir ficha técnica</span>
-                <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación de soporte</span>
-              </button>
-            )}
-          </div>
-
-          
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Descripción comercial</p>
-              <span className="text-xs text-slate-500">{draft.description.length} / 500 caracteres</span>
-            </div>
-            <textarea
-              value={draft.description}
-              onChange={event => setDraft(previous => ({ ...previous, description: event.currentTarget.value.slice(0, 500) }))}
-              placeholder="Escribe una descripción del producto para el canal web…"
-              className="min-h-[100px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-800 focus:bg-white"
-            />
-            {!draft.description.trim() ? (
-              <p className="mt-2 text-xs text-red-600">Campo obligatorio para publicar</p>
-            ) : (
-              <p className="mt-2 text-xs text-slate-400">Texto visible en el canal web y exportaciones internas.</p>
-            )}
-          </div>
-
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Identificación</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {renderField('EAN', draft.ean, next => setDraft(previous => ({ ...previous, ean: next })), {
-                required: true,
-                placeholder: '—',
-              })}
-              {renderField('Referencia base acabado', draft.baseRef, next => setDraft(previous => ({ ...previous, baseRef: next })), {
-                required: true,
-                placeholder: '—',
-              })}
-              {renderField('Peso (kg)', draft.weight, next => setDraft(previous => ({ ...previous, weight: next })), {
-                placeholder: '—',
-              })}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-                <EditableLabel required>Visible en web</EditableLabel>
-                <div className="mt-3 flex items-center gap-3">
-                  {canEditVisibility ? (
-                    <>
-                      {visibleToggle}
-                      <span className="text-sm font-medium text-slate-900">
-                        {draft.visibleOnWeb ? 'Sí, visible' : 'No, oculto'}
-                      </span>
-                    </>
-                  ) : (
-                    <span
-                      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-                        draft.visibleOnWeb ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                      key={image.id || image.url || index}
+                      onClick={() => setCurrentImageIndex(index)}
+                      className={`flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-xl border bg-slate-50 p-1 transition ${
+                        currentImageIndex === index
+                          ? 'border-[color:var(--catalog-accent)] ring-2 ring-[color:var(--catalog-accent-soft)]/70'
+                          : 'border-slate-200 hover:border-slate-300'
                       }`}
                     >
-                      {draft.visibleOnWeb ? 'Visible' : 'No visible'}
-                    </span>
-                  )}
+                      <img
+                        src={image.url}
+                        alt={image.alt || `${productName} ${index + 1}`}
+                        className="h-full w-full object-contain"
+                        onError={event => {
+                          (event.target as HTMLImageElement).src = fallbackImage(productName);
+                        }}
+                      />
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={onAddImage}
+                    className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-slate-400 transition hover:border-slate-400 hover:text-slate-600"
+                    aria-label="Añadir imagen"
+                  >
+                    <Plus className="h-5 w-5" />
+                  </button>
                 </div>
               </div>
-            </div>
+            )}
+
+            {isGroupProduct && variants.length > 1 ? (
+              <div className="mt-2 flex items-center gap-2 rounded-sm border border-gray-200 bg-white px-3 py-2 text-xs">
+                <div className="pr-2 text-[10px] uppercase tracking-wide text-gray-400">Acabado</div>
+                <div className="flex items-center gap-1.5 border-l border-gray-200 pl-2">
+                  {(() => {
+                    const visibleVariants = variants.length > 6 ? variants.slice(0, 5) : variants.slice(0, 6);
+                    const overflowCount = variants.length > 6 ? variants.length - 5 : 0;
+                    return (
+                      <>
+                        {visibleVariants.map((variant: any, index: number) => {
+                          const isActive = activeVariantIndex === index;
+                          const label = getVariantFinishLabel(variant) || cleanText(variant.sku || variant.number || variant.id || `Acabado ${index + 1}`);
+                          const color = getVariantSwatchColor(variant, index);
+                          return (
+                            <button
+                              key={variant.id || variant.number || index}
+                              type="button"
+                              title={label}
+                              onClick={() => {
+                                setActiveVariantIndex(index);
+                                setCurrentImageIndex(0);
+                              }}
+                              className={`h-4 w-4 rounded-sm border border-transparent transition ${
+                                isActive ? 'border-[color:var(--catalog-accent)] ring-1 ring-[color:var(--catalog-accent)]' : ''
+                              }`}
+                              style={{ backgroundColor: color || '#C8C8C8' }}
+                            />
+                          );
+                        })}
+                        {overflowCount > 0 ? (
+                          <span className="rounded-sm bg-gray-100 px-1.5 text-[10px] text-gray-400">+{overflowCount}</span>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
+                <div className="min-w-0 border-l border-gray-200 pl-2 text-xs font-medium text-gray-900">
+                  {cleanText(getVariantFinishLabel(activeVariant) || activeVariant?.sku || '') || '—'}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos</p>
+            <button
+              type="button"
+              onClick={onAddDocument}
+              className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
+            >
+              + Añadir
+            </button>
           </div>
 
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos técnicos</p>
+          {attachments.length > 0 ? (
+            <div className="space-y-3">
+              {attachments.map((attachment: any, index: number) => {
+                const attachmentName = normalizeAttachmentName(attachment);
+                const fileName = resolveFileName(attachment.downloadUrl || attachment.url || '', attachmentName);
+                const actionLabel = String(attachment.type || '').toLowerCase().includes('pdf') || fileName.toLowerCase().endsWith('.pdf')
+                  ? 'Descargar PDF'
+                  : 'Descargar';
+
+                return (
+                  <div
+                    key={attachment.id || attachment.url || index}
+                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
+                  >
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d90429] text-white">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900">{attachmentName}</p>
+                      <p className="mt-0.5 text-xs uppercase tracking-[0.18em] text-slate-500">
+                        {cleanText(attachment.type || 'Documento')}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void triggerDownload(attachment.downloadUrl || attachment.url, fileName)}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      {actionLabel}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {renderField('Colección', draft.collection, next => setDraft(previous => ({ ...previous, collection: next })), {
-                placeholder: '—',
-              })}
-              {renderField('Gama', draft.range, next => setDraft(previous => ({ ...previous, range: next })), {
-                placeholder: '—',
-              })}
-              {renderField('Precio (€)', draft.price, next => setDraft(previous => ({ ...previous, price: next })), {
-                required: true,
-                placeholder: '—',
-                type: 'number',
-              })}
-              <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-                <EditableLabel>Ficha técnica</EditableLabel>
-                {attributeSnapshot.technicalSheet ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void triggerDownload(
-                        attributeSnapshot.technicalSheet.downloadUrl || attributeSnapshot.technicalSheet.url,
-                        normalizeAttachmentName(attributeSnapshot.technicalSheet)
-                      )
-                    }
-                    className="mt-3 inline-flex items-center gap-2 rounded-full border border-[color:var(--catalog-accent)]/20 bg-[color:var(--catalog-accent-soft)]/45 px-3 py-1.5 text-xs font-semibold text-[color:var(--catalog-accent)] transition hover:border-[color:var(--catalog-accent)]/35 hover:bg-[color:var(--catalog-accent-soft)]"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Abrir documento
-                  </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onAddDocument}
+              className="flex min-h-[120px] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition hover:border-slate-400 hover:bg-slate-100"
+            >
+              <Upload className="mb-3 h-7 w-7 text-slate-400" />
+              <span className="text-sm font-medium text-slate-900">Añadir ficha técnica</span>
+              <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación de soporte</span>
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="space-y-4 bg-white px-5 py-5">
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Descripción comercial</p>
+            <span className="text-xs text-slate-500">{draft.description.length} / 500 caracteres</span>
+          </div>
+          <textarea
+            value={draft.description}
+            onChange={event => setDraft(previous => ({ ...previous, description: event.currentTarget.value.slice(0, 500) }))}
+            placeholder="Escribe una descripción del producto para el canal web…"
+            className="min-h-[120px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-800 focus:bg-white"
+          />
+          {!draft.description.trim() ? (
+            <p className="mt-2 text-xs text-red-600">Campo obligatorio para publicar</p>
+          ) : (
+            <p className="mt-2 text-xs text-slate-400">Texto visible en el canal web y exportaciones internas.</p>
+          )}
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Identificación</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {renderField('EAN', draft.ean, next => setDraft(previous => ({ ...previous, ean: next })), {
+              required: true,
+              placeholder: '—',
+            })}
+            {renderField('Referencia base acabado', draft.baseRef, next => setDraft(previous => ({ ...previous, baseRef: next })), {
+              required: true,
+              placeholder: '—',
+            })}
+            {renderField('Peso (kg)', draft.weight, next => setDraft(previous => ({ ...previous, weight: next })), {
+              placeholder: '—',
+            })}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+              <EditableLabel required>Visible en web</EditableLabel>
+              <div className="mt-3 flex items-center gap-3">
+                {canEditVisibility ? (
+                  <>
+                    {visibleToggle}
+                    <span className="text-sm font-medium text-slate-900">
+                      {draft.visibleOnWeb ? 'Sí, visible' : 'No, oculto'}
+                    </span>
+                  </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={onAddDocument}
-                    className="mt-3 inline-flex items-center gap-2 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-400"
+                  <span
+                    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+                      draft.visibleOnWeb ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                    }`}
                   >
-                    <Upload className="h-3.5 w-3.5" />
-                    Añadir ficha técnica
-                  </button>
+                    {draft.visibleOnWeb ? 'Visible' : 'No visible'}
+                  </span>
                 )}
               </div>
             </div>
           </div>
+        </div>
 
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Categorías</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {categoryIds.length > 0 ? (
-                categoryIds.map((categoryId: string, index: number) => (
-                  <span
-                    key={categoryId}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700"
-                    title={categoryId}
-                  >
-                    <Tag className="h-3.5 w-3.5 text-slate-400" />
-                    {cleanText(categoryLabelMap[categoryId] || `Categoría ${index + 1}`)}
-                  </span>
-                ))
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos técnicos</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {renderField('Colección', draft.collection, next => setDraft(previous => ({ ...previous, collection: next })), {
+              placeholder: '—',
+            })}
+            {renderField('Gama', draft.range, next => setDraft(previous => ({ ...previous, range: next })), {
+              placeholder: '—',
+            })}
+            {renderField('Precio (€)', draft.price, next => setDraft(previous => ({ ...previous, price: next })), {
+              required: true,
+              placeholder: '—',
+              type: 'number',
+            })}
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
+              <EditableLabel>Ficha técnica</EditableLabel>
+              {attributeSnapshot.technicalSheet ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void triggerDownload(
+                      attributeSnapshot.technicalSheet.downloadUrl || attributeSnapshot.technicalSheet.url,
+                      normalizeAttachmentName(attributeSnapshot.technicalSheet)
+                    )
+                  }
+                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-[color:var(--catalog-accent)]/20 bg-[color:var(--catalog-accent-soft)]/45 px-3 py-1.5 text-xs font-semibold text-[color:var(--catalog-accent)] transition hover:border-[color:var(--catalog-accent)]/35 hover:bg-[color:var(--catalog-accent-soft)]"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Abrir documento
+                </button>
               ) : (
-                <span className="text-sm text-slate-500">Sin categorías vinculadas</span>
+                <button
+                  type="button"
+                  onClick={onAddDocument}
+                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-400"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Añadir ficha técnica
+                </button>
               )}
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
-                onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Añadir
-              </button>
             </div>
+          </div>
+        </div>
+
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Categorías</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {categoryIds.length > 0 ? (
+              categoryIds.map((categoryId: string, index: number) => (
+                <span
+                  key={categoryId}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700"
+                  title={categoryId}
+                >
+                  <Tag className="h-3.5 w-3.5 text-slate-400" />
+                  {cleanText(categoryLabelMap[categoryId] || `Categoría ${index + 1}`)}
+                </span>
+              ))
+            ) : (
+              <span className="text-sm text-slate-500">Sin categorías vinculadas</span>
+            )}
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
+              onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Añadir
+            </button>
           </div>
         </div>
       </section>
     </div>
   );
-
   const variantsPanel = (
     <div className="px-6 py-6">
       <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
@@ -946,7 +944,7 @@ export function ProductModal({
             className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
           >
             <Plus className="h-4 w-4" />
-            Añadir acabado
+            AÃ±adir acabado
           </button>
         </div>
 
@@ -958,7 +956,7 @@ export function ProductModal({
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acabado</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">SKU</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">EAN</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Precio (€)</th>
+                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Precio (â‚¬)</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Peso (kg)</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Estado</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acciones</th>
@@ -966,7 +964,7 @@ export function ProductModal({
               </thead>
               <tbody>
                 {variants.map((variant: any, index: number) => {
-                  const variantSku = cleanText(variant.sku || variant.number || variant.id || '—');
+                  const variantSku = cleanText(variant.sku || variant.number || variant.id || 'â€”');
                   const finishLabel = getVariantFinishLabel(variant) || `Acabado ${index + 1}`;
                   const finishColor = getVariantSwatchColor(variant, index);
                   const variantEan = cleanText(
@@ -981,11 +979,11 @@ export function ProductModal({
                   const variantWeightRaw = variant.weight ?? variant.attributes?.weight ?? variant.attributes?.peso;
                   const variantPrice =
                     variantPriceRaw === null || variantPriceRaw === undefined || String(variantPriceRaw).trim() === ''
-                      ? '—'
+                      ? 'â€”'
                       : formatValue(variantPriceRaw);
                   const variantWeight =
                     variantWeightRaw === null || variantWeightRaw === undefined || String(variantWeightRaw).trim() === ''
-                      ? '—'
+                      ? 'â€”'
                       : formatValue(variantWeightRaw);
                   const variantStatus = STATUS_META[getProductStatus(variant as Product)];
                   const isCurrentVariant = activeVariantId === variant.id;
@@ -1015,7 +1013,7 @@ export function ProductModal({
                           <Copy className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
                         </button>
                       </td>
-                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantEan || '—'}</td>
+                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantEan || 'â€”'}</td>
                       <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantPrice}</td>
                       <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantWeight}</td>
                       <td className="px-4 py-3 align-middle">
@@ -1050,7 +1048,7 @@ export function ProductModal({
               className="mt-4 inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
             >
               <Plus className="h-4 w-4" />
-            Añadir acabado
+            AÃ±adir acabado
             </button>
           </div>
         )}
@@ -1078,7 +1076,7 @@ export function ProductModal({
                 onClick={() => onNavigateBreadcrumb?.('catalog')}
                 className="truncate font-medium text-slate-700 transition hover:text-slate-900"
               >
-                Catálogo
+                CatÃ¡logo
               </button>
               <ChevronRight className="h-4 w-4 text-slate-300" />
               <button
@@ -1086,7 +1084,7 @@ export function ProductModal({
                 onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
                 className="truncate font-medium text-slate-700 transition hover:text-slate-900"
               >
-                {primaryCategory || 'Sin categoría'}
+                {primaryCategory || 'Sin categorÃ­a'}
               </button>
               {isVariantProduct && parentProduct ? (
                 <>
@@ -1183,7 +1181,7 @@ export function ProductModal({
                   {productName}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID:{' '}
+                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> Â· ID:{' '}
                   <span className="font-mono text-slate-600">{shortId}</span>
                 </p>
               </div>
@@ -1209,7 +1207,7 @@ export function ProductModal({
                 </span>
               )}
                 <p className="text-xs text-slate-500">
-                  Actualizado {lastUpdate || '—'} · {updatedBy}
+                  Actualizado {lastUpdate || 'â€”'} Â· {updatedBy}
                 </p>
               </div>
             </div>
@@ -1222,9 +1220,9 @@ export function ProductModal({
                 </div>
                 <span className="text-xs font-medium text-green-700">{completenessLabel}</span>
                 {missingFields.length > 0 ? (
-                  <span className="text-xs text-red-600">· Falta: {missingFields.join(', ')}</span>
+                  <span className="text-xs text-red-600">Â· Falta: {missingFields.join(', ')}</span>
                 ) : (
-                  <span className="text-xs text-slate-500">• Todo completo</span>
+                  <span className="text-xs text-slate-500">â€¢ Todo completo</span>
                 )}
               </div>
             </div>

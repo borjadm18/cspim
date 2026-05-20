@@ -321,12 +321,9 @@ export const groupProductsForDisplay = (products: Product[]) => {
         .filter(product => product.id !== representative.id)
         .sort((a, b) => scoreForRepresentative(b) - scoreForRepresentative(a) || cleanText(a.name).localeCompare(cleanText(b.name), 'es'));
       const mediaSource =
-        representative.images?.length
-          ? representative
-          : [...bucket.members]
-              .filter(member => member.id !== representative.id && (member.images?.length || ((member as any).attachments?.length || 0)))
-              .sort((a, b) => scoreForMediaSource(b) - scoreForMediaSource(a) || scoreForRepresentative(b) - scoreForRepresentative(a))[0] ||
-            representative;
+        [...bucket.members]
+          .sort((a, b) => scoreForMediaSource(b) - scoreForMediaSource(a) || scoreForRepresentative(b) - scoreForRepresentative(a))[0] ||
+        representative;
 
       return {
         ...representative,

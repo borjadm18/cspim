@@ -24,7 +24,7 @@ const fallbackImage = (title: string) => {
 };
 
 export function ProductCard({ product, categoryLabelMap, onViewDetails }: ProductCardProps) {
-  const primaryImage = product.images?.[0]?.url;
+  const primaryImage = product.images?.find(image => image?.url)?.url;
   const variantCount = Array.isArray((product as any).variants) ? (product as any).variants.length : 0;
   const variantSwatches = Array.isArray((product as any).variants) ? (product as any).variants : [];
   const primaryCategory = getPrimaryCategoryLabel(product, categoryLabelMap);
@@ -34,7 +34,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
 
   return (
     <article
-      className="group overflow-hidden rounded-[18px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)]"
+      className="group flex h-full flex-col overflow-hidden rounded-[18px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)]"
       role="button"
       tabIndex={0}
       onClick={() => onViewDetails(product)}
@@ -44,8 +44,8 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
           onViewDetails(product);
         }
       }}
-    >
-      <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
+      >
+        <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
         <div className="flex aspect-[4/3] items-center justify-center p-4">
           <img
             src={primaryImage || fallbackImage(product.name)}
@@ -60,7 +60,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
 
       </div>
 
-      <div className="space-y-3 p-4">
+      <div className="flex flex-1 flex-col space-y-3 p-4">
         {variantSwatches.length > 0 ? (
           <div className="flex items-center gap-1.5">
             {visibleSwatches.map((variant: any, index: number) => {
@@ -99,15 +99,6 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
           <span className="rounded-[10px] border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--catalog-accent)]">
             {primaryCategory}
           </span>
-          <span
-            className={`rounded-[10px] border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] ${
-              variantCount > 0
-                ? 'border-amber-200 bg-amber-50 text-amber-700'
-                : 'border-slate-200 bg-slate-50 text-slate-600'
-            }`}
-          >
-            {variantCount > 0 ? 'Grupo de acabados' : 'Sin acabados'}
-          </span>
           {variantCount > 1 && (
             <span className="rounded-[10px] border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
               {variantCount} acabados
@@ -121,7 +112,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
             event.stopPropagation();
             onViewDetails(product);
           }}
-          className="inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] text-sm font-semibold text-white transition-colors hover:opacity-95"
+          className="mt-auto inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] text-sm font-semibold text-white transition-colors hover:opacity-95"
         >
           Ver detalles
         </button>
