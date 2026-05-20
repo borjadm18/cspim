@@ -10,6 +10,7 @@ import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
 import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
 import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
+import { useTenantBranding } from '../hooks/useTenantBranding';
 import type { QuickFilter } from '../features/catalog/model/catalogTypes';
 import LoginPage from '../pages/LoginPage';
 import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
@@ -18,6 +19,7 @@ import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
 function CatalogPage() {
   const { profile } = useAuth();
+  const branding = useTenantBranding(profile?.tenantId);
   const currentUserRole =
     profile?.role === 'superadmin' || profile?.role === 'admin'
       ? 'admin'
@@ -114,10 +116,12 @@ function CatalogPage() {
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId);
   const appStyle = {
-    '--catalog-accent': theme.accent,
-    '--catalog-accent-strong': theme.accentStrong,
-    '--catalog-accent-soft': theme.accentSoft,
-    '--catalog-accent-ink': theme.accentInk,
+    '--catalog-accent': branding?.primaryColor ?? theme.accent,
+    '--catalog-accent-strong': branding?.primaryHover ?? theme.accentStrong,
+    '--catalog-accent-soft': branding?.primaryColor
+      ? `color-mix(in srgb, ${branding.primaryColor} 12%, white)`
+      : theme.accentSoft,
+    '--catalog-accent-ink': branding?.primaryText ?? theme.accentInk,
     '--catalog-page-start': theme.pageStart,
     '--catalog-page-end': theme.pageEnd,
   } as React.CSSProperties;
@@ -167,7 +171,7 @@ function CatalogPage() {
         categoryCount={categoryOptions.length}
         assetCount={assetCount}
         activeViewName={activeSavedView?.name ?? null}
-        logoUrl={settings.logoUrl}
+        logoUrl={branding?.logoUrl ?? settings.logoUrl}
         tenantOptions={tenantOptions}
         selectedTenantId={selectedTenantId}
         accessMode={CATALOG_ACCESS_MODE}
