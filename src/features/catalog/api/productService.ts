@@ -312,7 +312,7 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
 
     return products.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name));
   } catch (error) {
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV && CATALOG_SOURCE_MODE !== 'remote') {
       return loadLocalFallbackProducts();
     }
 

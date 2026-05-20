@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run dev:remote",
     "dev:frontend": "vite --port 4174",
     "dev:api": "node scripts/local-api-server.mjs",
     "dev:remote": "powershell -ExecutionPolicy Bypass -File scripts/dev-remote.ps1",

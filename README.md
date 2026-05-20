@@ -35,14 +35,15 @@ Control de modo:
 
 - `VITE_CATALOG_TENANTS_JSON`: lista pública de organizaciones visibles en el selector del frontend
 - `VITE_CATALOG_SOURCE_MODE`: `local` o `remote`
-  - en desarrollo local conviene `local`
-  - en Vercel o `vercel dev` puedes usar `remote`
-- `VITE_CATALOG_ALLOW_REMOTE_DEV`: solo para forzar `remote` en desarrollo local
+  - `npm run dev` arranca con proxy remoto para trabajar con organizaciones reales
+  - `npm run dev:frontend` + `VITE_CATALOG_SOURCE_MODE=local` usa el sample local
+- `VITE_CATALOG_ALLOW_REMOTE_DEV`: solo si quieres forzar `remote` cuando arrancas únicamente el frontend
 - `BLUESTONE_TENANTS_JSON`: mapa server-side con credenciales por organización
 - `BLUESTONE_CLIENT_ID`, `BLUESTONE_CLIENT_SECRET`, `BLUESTONE_ORG_ID`, `BLUESTONE_ENV`, `BLUESTONE_CONTEXT`: modo simple para una sola organización
 
 En producción, el frontend llama a `/api/catalog` y el backend resuelve la organización configurada con las credenciales de Bluestone.
-En desarrollo local, el proyecto usa el sample local para evitar errores de JSON y solo depende de `/api/catalog` si activas `VITE_CATALOG_ALLOW_REMOTE_DEV=true`.
+En desarrollo local, `npm run dev` levanta también el proxy Bluestone para poder trabajar con datos remotos; si el proxy no está disponible y el modo sigue siendo `remote`, la app muestra error en lugar de caer silenciosamente al sample local.
+Si prefieres ver el sample local, usa `npm run dev:frontend` y `VITE_CATALOG_SOURCE_MODE=local`.
 La selección de organización en la UI cambia la configuración activa; en modo `client` el selector se oculta.
 
 ### Modo remoto en local
