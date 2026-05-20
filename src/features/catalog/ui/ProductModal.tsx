@@ -351,9 +351,7 @@ export function ProductModal({
     ? (currentLocale.toUpperCase() as LocaleCode)
     : (locales[0]?.toUpperCase() as LocaleCode) || 'ES';
   const parentGroupLabel = parentProduct ? cleanText(parentProduct.name) : '';
-  const variantLabel = isVariantProduct
-    ? cleanText((product as any).finish || (product as any).finishName || (product as any).finishLabel || product.name)
-    : '';
+  const variantLabel = isVariantProduct ? getVariantFinishLabel(product) : '';
   const activeVariantId = isVariantProduct ? product.id : '';
 
   const attributes = useMemo(() => {

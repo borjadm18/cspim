@@ -76,32 +76,40 @@ const FINISH_COLORS: Record<string, string> = {
 
 export const getVariantFinishLabel = (product: Product) => {
   const parentName = normalizeKey(product.name);
-  const candidates = [
+  const attributes = Array.isArray(product.attributes)
+    ? product.attributes
+    : Object.entries(product.attributes || {}).map(([key, value]) => ({
+        key,
+        name: key,
+        label: key,
+        value,
+        displayValue: value,
+      }));
+
+  const candidateValues = [
     (product as any).finish,
     (product as any).color,
     (product as any).acabado,
     (product as any).finishName,
-    (product as any).attributeValue,
-    (product as any).attributes?.finish,
-    (product as any).attributes?.color,
   ];
 
-  for (const candidate of candidates) {
+  for (const candidate of candidateValues) {
     const text = cleanText(candidate).trim();
     if (text && normalizeKey(text) !== parentName) return text;
   }
 
-  const attributes = Array.isArray(product.attributes)
-    ? product.attributes
-    : Object.entries(product.attributes || {}).map(([name, value]) => ({ name, value }));
-
   const finishAttribute = attributes.find((attribute: any) => {
-    const name = normalizeKey(attribute.definitionName || attribute.name || attribute.label || attribute.definitionId || '');
-    return name.includes('acabado') || name.includes('finish') || name.includes('color') || name.includes('color');
+    const key = normalizeKey(attribute.key || attribute.name || attribute.label || attribute.definitionName || attribute.definitionId || '');
+    return ['finish', 'color', 'acabado'].includes(key);
   });
 
-  const finishAttributeValue = cleanText(finishAttribute?.displayValue ?? finishAttribute?.value ?? finishAttribute?.values).trim();
-  if (finishAttributeValue && normalizeKey(finishAttributeValue) !== parentName) return finishAttributeValue;
+  const finishAttributeValue = cleanText(
+    finishAttribute?.value ?? finishAttribute?.displayValue ?? finishAttribute?.values
+  ).trim();
+
+  if (finishAttributeValue && normalizeKey(finishAttributeValue) !== parentName) {
+    return finishAttributeValue;
+  }
 
   const skuFallback = cleanText(product.sku || (product as any).number || product.id).trim();
   return skuFallback || finishAttributeValue;
