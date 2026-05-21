@@ -33,6 +33,8 @@ import {
   filterProducts,
   hasAssets,
   resolveCategorySelectionIds,
+  cleanText,
+  isTestProduct,
 } from '../selectors/catalogSelectors';
 
 const DEFAULT_SETTINGS: CatalogSettings = {
@@ -331,8 +333,8 @@ export function useCatalog() {
         const nextTenantOptions = organizations
           .map((item: any) => ({
             id: typeof item.id === 'string' ? item.id.trim() : '',
-            label: typeof item.label === 'string' ? item.label.trim() : '',
-            description: typeof item.description === 'string' ? item.description.trim() : undefined,
+            label: cleanText(item.label ?? '').trim(),
+            description: typeof item.description === 'string' ? cleanText(item.description).trim() : undefined,
           }))
           .filter((item: CatalogTenantOption) => Boolean(item.id && item.label));
 
@@ -394,8 +396,9 @@ export function useCatalog() {
     const token = ++requestTokenRef.current;
     try {
       const cachedProducts = getCachedProducts(selectedTenantId);
-      if (cachedProducts && cachedProducts.length > 0) {
-        setProducts(cachedProducts);
+      const visibleCachedProducts = cachedProducts?.filter(product => !isTestProduct(product)) || [];
+      if (visibleCachedProducts.length > 0) {
+        setProducts(visibleCachedProducts);
         setLoading(false);
         setError(null);
       } else {
@@ -405,8 +408,9 @@ export function useCatalog() {
       setError(null);
       const data = await fetchProducts(selectedTenantId);
       if (requestTokenRef.current !== token) return;
-      setProducts(data);
-      setCachedProducts(selectedTenantId, data);
+      const visibleProducts = data.filter(product => !isTestProduct(product));
+      setProducts(visibleProducts);
+      setCachedProducts(selectedTenantId, visibleProducts);
     } catch (err) {
       if (requestTokenRef.current !== token) return;
       setError(err instanceof Error ? err.message : 'Error desconocido al cargar productos');

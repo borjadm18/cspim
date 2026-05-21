@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Package } from 'lucide-react';
 import type { Product } from '../api/productService';
 import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel, getVariantSwatchColor } from '../selectors/catalogSelectors';
 
@@ -7,16 +9,16 @@ interface ProductCardProps {
   onViewDetails: (product: Product) => void;
 }
 
-const fallbackImage = (title: string) => {
-  const safeTitle = title.slice(0, 32);
+const fallbackImage = () => {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 540" fill="none">
-      <rect width="720" height="540" rx="28" fill="#f8fafc"/>
-      <rect x="160" y="120" width="400" height="240" rx="18" fill="#e2e8f0"/>
-      <rect x="188" y="148" width="344" height="184" rx="14" fill="#ffffff"/>
-      <path d="M236 262h248" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
-      <path d="M310 204h100" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
-      <text x="50%" y="434" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#64748b">${safeTitle}</text>
+      <rect width="720" height="540" rx="28" fill="#f5f5f5"/>
+      <rect x="170" y="118" width="380" height="226" rx="20" fill="#e5e7eb"/>
+      <rect x="206" y="154" width="308" height="154" rx="14" fill="#fafafa"/>
+      <path d="M250 252h220" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
+      <path d="M304 214h112" stroke="#cbd5e1" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="360" cy="398" r="24" fill="#e2e8f0"/>
+      <path d="M348 398h24" stroke="#94a3b8" stroke-width="8" stroke-linecap="round"/>
     </svg>
   `;
 
@@ -25,12 +27,18 @@ const fallbackImage = (title: string) => {
 
 export function ProductCard({ product, categoryLabelMap, onViewDetails }: ProductCardProps) {
   const primaryImage = product.images?.find(image => image?.url)?.url;
+  const hasPrimaryImage = Boolean(primaryImage);
+  const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'empty'>(hasPrimaryImage ? 'loading' : 'empty');
   const variantCount = Array.isArray((product as any).variants) ? (product as any).variants.length : 0;
   const variantSwatches = Array.isArray((product as any).variants) ? (product as any).variants : [];
   const primaryCategory = getPrimaryCategoryLabel(product, categoryLabelMap);
   const brandOrFamily = cleanText(product.brand).trim() || primaryCategory;
   const visibleSwatches = variantSwatches.length > 6 ? variantSwatches.slice(0, 5) : variantSwatches.slice(0, 6);
   const overflowCount = variantSwatches.length > 6 ? variantSwatches.length - 5 : 0;
+
+  useEffect(() => {
+    setImageStatus(hasPrimaryImage ? 'loading' : 'empty');
+  }, [hasPrimaryImage, primaryImage]);
 
   return (
     <article
@@ -45,19 +53,33 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
         }
       }}
       >
-        <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
+      <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
         <div className="flex aspect-[4/3] items-center justify-center p-4">
-          <img
-            src={primaryImage || fallbackImage(product.name)}
-            alt={product.name}
-            className="max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
-            onError={(event) => {
-              (event.target as HTMLImageElement).src = fallbackImage(product.name);
-            }}
-            loading="lazy"
-          />
+          {hasPrimaryImage ? (
+            <>
+              {imageStatus === 'loading' ? (
+                <div className="absolute inset-0 animate-pulse bg-slate-100" aria-hidden="true" />
+              ) : null}
+              <img
+                src={primaryImage || fallbackImage()}
+                alt={product.name}
+                className="relative z-10 max-h-full max-w-full object-contain transition-transform duration-300 group-hover:scale-[1.02]"
+                onLoad={() => setImageStatus('ready')}
+                onError={event => {
+                  setImageStatus('empty');
+                  (event.target as HTMLImageElement).src = fallbackImage();
+                }}
+                loading="lazy"
+              />
+            </>
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center rounded-[22px] border border-dashed border-slate-200 bg-[#f5f5f5] text-center">
+              <Package className="h-10 w-10 text-slate-400" />
+              <span className="mt-3 text-sm font-medium text-slate-500">Sin imagen</span>
+              <span className="mt-1 text-xs text-slate-400">A la espera de un archivo principal</span>
+            </div>
+          )}
         </div>
-
       </div>
 
       <div className="flex flex-1 flex-col space-y-3 p-4 pb-20">
@@ -87,7 +109,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
           <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
             {brandOrFamily}
           </p>
-          <h3 className="line-clamp-2 min-h-[3rem] text-[15px] font-semibold tracking-[-0.025em] text-slate-900">
+          <h3 title={product.name} className="line-clamp-2 min-h-[3rem] text-[15px] font-semibold tracking-[-0.025em] text-slate-900">
             {product.name}
           </h3>
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
@@ -96,24 +118,24 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
         </div>
 
         <div className="flex min-h-[2.75rem] flex-wrap gap-2">
-          <span className="rounded-[10px] border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--catalog-accent)]">
+          <span className="rounded-[4px] border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/70 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--catalog-accent)]">
             {primaryCategory}
           </span>
           {variantCount > 1 && (
-            <span className="rounded-[10px] border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+            <span className="rounded-[4px] border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
               {variantCount} acabados
             </span>
           )}
         </div>
 
-        <div className="absolute inset-x-4 bottom-4">
+        <div className="mt-auto pt-4">
           <button
             type="button"
             onClick={(event) => {
               event.stopPropagation();
               onViewDetails(product);
             }}
-            className="inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] text-sm font-semibold text-white transition-colors hover:opacity-95"
+            className="inline-flex h-10 w-auto items-center justify-center rounded-[4px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] px-4 text-sm font-semibold text-white transition-colors hover:opacity-95"
           >
             Ver detalles
           </button>

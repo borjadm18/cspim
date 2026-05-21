@@ -81,7 +81,7 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
   try {
     const parsed = JSON.parse(rawPrivate) as Record<string, unknown>;
     return Object.keys(parsed || {}).map(id =>
-      normalizeOrganization(id, canonicalLabels[id] || id, 'OrganizaciÃ³n configurada en Bluestone')
+      normalizeOrganization(id, canonicalLabels[id] || id, 'Organización configurada en Bluestone')
     );
   } catch {
     return [

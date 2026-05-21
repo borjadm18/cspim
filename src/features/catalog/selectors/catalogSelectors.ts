@@ -188,6 +188,21 @@ const getVariantParentId = (product: Product) =>
 const getProductTypeKey = (product: Product) =>
   normalizeKey((product as any).type || (product as any).metadata?.type);
 
+export const isTestProduct = (product: Product) => {
+  const haystack = [
+    product.id,
+    product.name,
+    product.sku,
+    (product as any).number,
+    (product as any).metadata?.name,
+    (product as any).metadata?.number,
+  ]
+    .map(value => normalizeKey(value).toUpperCase())
+    .join(' ');
+
+  return /\bTEST[_\s-]|DEBUG|PLAYGROUND\b/i.test(haystack) || /(^|[\s/_-])test($|[\s/_-])/i.test(haystack);
+};
+
 const scoreForRepresentative = (product: Product) => {
   let value = 0;
   if (hasImages(product)) value += 200;

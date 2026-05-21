@@ -157,12 +157,28 @@ export function FiltersSidebar({
     () => Object.fromEntries(statusOptions.map(option => [option.id, option])),
     [statusOptions]
   );
+  const activeFilterCount = [
+    selectedName.trim(),
+    selectedNumber.trim(),
+    selectedBrand !== 'all',
+    selectedCategory !== 'all',
+    selectedType !== 'all',
+    selectedStatus !== 'all',
+    selectedMediaFilter !== 'all',
+  ].filter(Boolean).length;
 
   return (
     <div className="sticky top-24 overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
       <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <div>
-          <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-700">Filtros</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-700">Filtros</h2>
+            {activeFilterCount > 0 ? (
+              <span className="rounded-full bg-[color:var(--catalog-accent-soft)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)]">
+                {activeFilterCount} activos
+              </span>
+            ) : null}
+          </div>
           <p className="mt-1 text-xs text-slate-500">Acota por nombre, número, tipo, estado y más.</p>
         </div>
         <button
