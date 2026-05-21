@@ -307,17 +307,36 @@ const chunk = <T,>(items: T[], size: number) => {
   return result;
 };
 
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+) => {
+  const results: R[] = [];
+  const queue = [...items].map((item, index) => ({ item, index }));
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) break;
+      results[next.index] = await mapper(next.item, next.index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+};
+
 const isImageFileName = (fileName: string) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
 
-const fetchAssetDownloads = async (tenant: TenantConfig, assetIds: string[]) => {
+const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds: string[]) => {
   const uniqueAssetIds = [...new Set(assetIds.map(assetId => String(assetId).trim()).filter(Boolean))];
   const downloads = new Map<string, { assetId: string; presignedUrl: string; fileName: string }>();
   if (!uniqueAssetIds.length) return downloads;
 
-  const token = await getAccessToken(tenant);
   const baseUrl = getBaseUrl(tenant.env);
+  const batches = chunk(uniqueAssetIds, 100);
 
-  for (const batch of chunk(uniqueAssetIds, 100)) {
+  await mapWithConcurrency(batches, 4, async batch => {
     const response = await fetchWithRetry(`${baseUrl}/media-bank/assets/download`, {
       method: 'POST',
       headers: {
@@ -345,7 +364,7 @@ const fetchAssetDownloads = async (tenant: TenantConfig, assetIds: string[]) => 
         fileName: asset.fileName || asset.assetId,
       });
     }
-  }
+  });
 
   return downloads;
 };
@@ -454,9 +473,11 @@ const fetchProducts = async (tenant: TenantConfig) => {
     cursor = payload?.nextCursor || payload?.cursor || null;
   } while (cursor);
 
-  const definitionMap = await fetchDefinitions(tenant, token);
   const assetIds = allProducts.flatMap(product => (Array.isArray(product?.assets) ? product.assets.map((asset: unknown) => String(asset)).filter(Boolean) : []));
-  const assetMap = await fetchAssetDownloads(tenant, assetIds);
+  const [definitionMap, assetMap] = await Promise.all([
+    fetchDefinitions(tenant, token),
+    fetchAssetDownloads(tenant, token, assetIds),
+  ]);
 
   const normalizedProducts = allProducts.map(product => {
     const media = buildProductMedia(

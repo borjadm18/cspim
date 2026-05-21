@@ -285,6 +285,21 @@ const chunk = (items, size) => {
   return result;
 };
 
+const mapWithConcurrency = async (items, concurrency, mapper) => {
+  const results = [];
+  const queue = [...items].map((item, index) => ({ item, index }));
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) break;
+      results[next.index] = await mapper(next.item, next.index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+};
+
 const isImageFileName = (fileName) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
 
 const fetchDefinitions = async (tenant, token) => {
@@ -410,12 +425,12 @@ const fetchProducts = async (tenant) => {
       cursor = payload?.nextCursor || payload?.cursor || null;
     } while (cursor);
 
-    const definitionMap = await fetchDefinitions(tenant, token);
     const assetIds = allProducts.flatMap(product => (Array.isArray(product?.assets) ? product.assets.map((asset) => String(asset)).filter(Boolean) : []));
     const uniqueAssetIds = [...new Set(assetIds)];
     const assetMap = new Map();
 
-    for (const batch of chunk(uniqueAssetIds, 100)) {
+    const batches = chunk(uniqueAssetIds, 100);
+    const fetchAssetBatch = async (batch) => {
       const response = await fetchWithRetry(`${baseUrl}/media-bank/assets/download`, {
         method: 'POST',
         headers: {
@@ -442,7 +457,10 @@ const fetchProducts = async (tenant) => {
           fileName: asset.fileName || asset.assetId,
         });
       }
-    }
+    };
+
+    await mapWithConcurrency(batches, 4, fetchAssetBatch);
+    const definitionMap = await fetchDefinitions(tenant, token);
 
     const normalizedProducts = allProducts.map(product => {
       const ids = Array.isArray(product?.assets) ? product.assets.map((asset) => String(asset)).filter(Boolean) : [];
