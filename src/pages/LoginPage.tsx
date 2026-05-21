@@ -92,7 +92,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex w-full flex-1 flex-col justify-center bg-white px-[34px] py-10 md:w-[340px] md:flex-shrink-0">
+      <div className="flex w-full flex-1 flex-col justify-center bg-white px-[34px] py-10 md:min-h-screen md:w-[340px] md:flex-shrink-0 md:py-0">
         <p className="mb-[18px] text-[9px] font-medium uppercase tracking-[0.1em] text-[#A8A5A0]">
           Acceso seguro
         </p>
@@ -114,7 +114,10 @@ export default function LoginPage() {
           <input
             type="email"
             value={email}
-            onChange={event => handleEmailChange(event.target.value)}
+            onChange={event => {
+              handleEmailChange(event.target.value);
+              if (authError) setAuthError(null);
+            }}
             placeholder="tu@empresa.com"
             autoComplete="email"
             className="w-full rounded-sm border border-[#E2DED8] bg-[#FAFAF8] px-[11px] py-[9px] text-[13px] text-gray-900 outline-none transition-colors placeholder:text-[#CCC9C3] focus:border-[#0F2238] focus:bg-white"
@@ -129,7 +132,10 @@ export default function LoginPage() {
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
-              onChange={event => handlePasswordChange(event.target.value)}
+              onChange={event => {
+                handlePasswordChange(event.target.value);
+                if (authError) setAuthError(null);
+              }}
               onKeyDown={event => {
                 if (event.key === 'Enter') {
                   void handleLogin();
