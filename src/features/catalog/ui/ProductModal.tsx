@@ -297,6 +297,67 @@ const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }
   </div>
 );
 
+const FILE_ATTRIBUTE_KEYWORDS = [
+  'url',
+  'link',
+  'enlace',
+  'archivo',
+  'fichero',
+  'ficha tecnica',
+  'ficha técnica',
+  'pdf',
+  'manual',
+  'download',
+  'descarga',
+  '2d',
+  '3d',
+  'dwg',
+];
+
+const getAttributeLabel = (attr: any) => cleanText(attr?.label || attr?.definitionName || attr?.name || attr?.definitionId || 'Atributo');
+
+const getAttributeHref = (attr: any) => {
+  const candidates = [attr?.downloadUrl, attr?.url, attr?.fileUrl, attr?.href, attr?.displayValue, attr?.value, attr?.values];
+  for (const candidate of candidates) {
+    const text = extractTextValue(candidate).trim();
+    if (/^https?:\/\//i.test(text)) return text;
+  }
+  return '';
+};
+
+const isFileLikeAttribute = (attr: any) => {
+  const label = normalizeKey(getAttributeLabel(attr));
+  const href = getAttributeHref(attr);
+  const valueText = normalizeKey(formatValue(attr?.displayValue ?? attr?.value ?? attr?.values));
+
+  if (href) return true;
+  return FILE_ATTRIBUTE_KEYWORDS.some(keyword => label.includes(keyword) || valueText.includes(keyword));
+};
+
+const getAttributeFileKind = (attr: any, href: string) => {
+  const label = normalizeKey(getAttributeLabel(attr));
+  const lowerHref = href.toLowerCase();
+  if (label.includes('pdf') || lowerHref.endsWith('.pdf')) return 'PDF';
+  if (label.includes('dwg') || lowerHref.endsWith('.dwg')) return 'DWG';
+  if (label.includes('3d')) return '3D';
+  if (label.includes('2d')) return '2D';
+  if (label.includes('manual')) return 'Manual';
+  if (label.includes('url') || label.includes('link') || label.includes('enlace')) return 'Enlace';
+  return 'Archivo';
+};
+
+const getAttributeFileName = (attr: any, href: string) => {
+  const label = getAttributeLabel(attr);
+  if (href) {
+    const fileName = resolveFileName(href, label);
+    if (fileName) return fileName;
+  }
+
+  const valueText = formatValue(attr?.displayValue ?? attr?.value ?? attr?.values).trim();
+  if (valueText && !/^https?:\/\//i.test(valueText)) return valueText;
+  return label;
+};
+
 const renderAttributeValueNode = (attr: any) => {
   const rawValue = attr?.displayValue ?? attr?.value ?? attr?.values;
   const boolValue = parseBooleanValue(rawValue);
@@ -395,11 +456,16 @@ export function ProductModal({
     });
   }, [product.attributes]);
 
-    const attributeLookup = useMemo(() => buildAttributeLookup(attributes), [attributes]);
+  const fileAttributes = useMemo(
+    () => attributes.filter((attr: any) => isFileLikeAttribute(attr)),
+    [attributes]
+  );
+  const attributeLookup = useMemo(() => buildAttributeLookup(attributes), [attributes]);
   const attributeGroups = useMemo(() => {
     const groups = new Map<string, any[]>();
 
     for (const attribute of attributes as any[]) {
+      if (isFileLikeAttribute(attribute)) continue;
       const value = attribute?.displayValue ?? attribute?.value ?? attribute?.values;
       if (!isRenderableValue(value)) continue;
 
@@ -854,6 +920,75 @@ export function ProductModal({
             </div>
           )}
         </div>
+
+        {fileAttributes.length > 0 ? (
+          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Archivos</p>
+                <p className="mt-1 text-xs text-slate-500">{fileAttributes.length} ficheros vinculados</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {fileAttributes.map((attr: any, index: number) => {
+                const href = getAttributeHref(attr);
+                const label = getAttributeLabel(attr);
+                const title = getAttributeFileName(attr, href);
+                const kind = getAttributeFileKind(attr, href);
+                const isDownloadable = /\.(pdf|dwg|zip|png|jpe?g|webp|gif|svg)$/i.test(href);
+
+                return (
+                  <div
+                    key={attr.definitionId || attr.name || `${label}-${index}`}
+                    className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
+                  >
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--catalog-accent-soft)] text-[color:var(--catalog-accent)]">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium text-slate-900">{label}</p>
+                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                          {kind}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-slate-500">{title}</p>
+                    </div>
+
+                    {href ? (
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Abrir
+                        </a>
+                        {isDownloadable ? (
+                          <button
+                            type="button"
+                            onClick={() => void triggerDownload(href, title)}
+                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Descargar
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
+                        Sin enlace
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );
