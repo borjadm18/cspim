@@ -103,4 +103,3 @@ export async function GET() {
 export async function OPTIONS() {
   return new Response(null, { status: 200, headers: corsHeaders });
 }
-

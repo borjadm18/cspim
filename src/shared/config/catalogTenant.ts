@@ -22,7 +22,7 @@ const DEFAULT_PUBLIC_TENANTS: CatalogTenantOption[] = [
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
