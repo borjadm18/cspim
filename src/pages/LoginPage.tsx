@@ -38,51 +38,12 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-[#0F2238] md:flex">
       <div className="relative hidden flex-1 overflow-hidden bg-[#0F2238] md:flex">
-        <svg
-          className="absolute inset-0 h-full w-full opacity-[0.13]"
-          viewBox="0 0 400 520"
-          preserveAspectRatio="xMidYMid slice"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <defs>
-            <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-            </pattern>
-          </defs>
-
-          <rect width="400" height="520" fill="url(#grid)" />
-          <circle cx="320" cy="80" r="120" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-          <circle cx="320" cy="80" r="80" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-          <circle cx="320" cy="80" r="40" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-          <circle cx="60" cy="420" r="100" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-          <circle cx="60" cy="420" r="60" fill="none" stroke="#ffffff" strokeWidth="0.5" />
-          <line x1="0" y1="0" x2="400" y2="520" stroke="#ffffff" strokeWidth="0.3" />
-          <line x1="400" y1="0" x2="0" y2="520" stroke="#ffffff" strokeWidth="0.3" />
-          <line x1="0" y1="260" x2="400" y2="260" stroke="#ffffff" strokeWidth="0.3" />
-          <line x1="200" y1="0" x2="200" y2="520" stroke="#ffffff" strokeWidth="0.3" />
-          <rect
-            x="140"
-            y="180"
-            width="80"
-            height="80"
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="0.5"
-            transform="rotate(15 180 220)"
-          />
-          <rect
-            x="155"
-            y="195"
-            width="50"
-            height="50"
-            fill="none"
-            stroke="#ffffff"
-            strokeWidth="0.3"
-            transform="rotate(15 180 220)"
-          />
-          <circle cx="200" cy="260" r="6" fill="#ffffff" opacity="0.4" />
-          <circle cx="200" cy="260" r="2" fill="#ffffff" opacity="0.8" />
-        </svg>
+        <div
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+          style={{ backgroundImage: "url('/login-background.png')" }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-[#0F2238]/10" aria-hidden="true" />
 
         <div className="relative z-10 flex h-full w-full flex-col justify-between p-8">
           <div className="flex items-center gap-2">
@@ -95,7 +56,7 @@ export default function LoginPage() {
             <span className="text-[12px] font-medium tracking-[0.04em] text-white/90">Content Store</span>
           </div>
 
-          <div className="flex-1 flex flex-col justify-end pb-2">
+          <div className="flex flex-1 flex-col justify-end pb-2">
             <div className="mb-3 inline-flex w-fit items-center gap-[5px] rounded-sm border border-white/[0.12] bg-white/[0.07] px-2 py-[3px] text-[10px] text-white/50">
               <div className="h-[5px] w-[5px] flex-shrink-0 rounded-full bg-[#639922]" />
               {tenantName}
@@ -108,7 +69,8 @@ export default function LoginPage() {
             </h1>
 
             <p className="text-[11px] leading-[1.65] text-white/40">
-              Gestiona fichas, imágenes y canales de publicación desde un espacio de trabajo centralizado.
+              Gestiona fichas, imágenes y canales de publicación desde un espacio de trabajo
+              centralizado.
             </p>
           </div>
 
