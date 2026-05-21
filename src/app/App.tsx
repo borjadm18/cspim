@@ -117,12 +117,10 @@ function CatalogPage() {
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId);
   const appStyle = {
-    '--catalog-accent': branding?.primaryColor ?? theme.accent,
-    '--catalog-accent-strong': branding?.primaryHover ?? theme.accentStrong,
-    '--catalog-accent-soft': branding?.primaryColor
-      ? `color-mix(in srgb, ${branding.primaryColor} 12%, white)`
-      : theme.accentSoft,
-    '--catalog-accent-ink': branding?.primaryText ?? theme.accentInk,
+    '--catalog-accent': theme.accent,
+    '--catalog-accent-strong': theme.accentStrong,
+    '--catalog-accent-soft': theme.accentSoft,
+    '--catalog-accent-ink': theme.accentInk,
     '--catalog-page-start': theme.pageStart,
     '--catalog-page-end': theme.pageEnd,
   } as React.CSSProperties;
