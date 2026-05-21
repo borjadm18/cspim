@@ -291,6 +291,24 @@ const firstAvailableBoolean = (product: Product, lookup: Map<string, any>, topLe
 
 const normalizeAttachmentName = (attachment: any) => cleanText(attachment.name || attachment.fileName || 'Documento');
 
+const isUrlLikeString = (value: unknown) => {
+  const text = formatValue(value).trim();
+  return /^https?:\/\//i.test(text);
+};
+
+const getFriendlyUrlLabel = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./i, '');
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop();
+    if (!lastSegment) return host;
+    const decoded = decodeURIComponent(lastSegment);
+    return decoded.length > 42 ? `${host} · ${decoded.slice(0, 39)}…` : `${host} · ${decoded}`;
+  } catch {
+    return url;
+  }
+};
+
 
 const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }) => (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
@@ -331,7 +349,7 @@ const isFileLikeAttribute = (attr: any) => {
   const href = getAttributeHref(attr);
   const valueText = normalizeKey(formatValue(attr?.displayValue ?? attr?.value ?? attr?.values));
 
-  if (href) return true;
+  if (href || isUrlLikeString(attr?.displayValue ?? attr?.value ?? attr?.values)) return true;
   return FILE_ATTRIBUTE_KEYWORDS.some(keyword => label.includes(keyword) || valueText.includes(keyword));
 };
 
@@ -355,7 +373,8 @@ const getAttributeFileName = (attr: any, href: string) => {
   }
 
   const valueText = formatValue(attr?.displayValue ?? attr?.value ?? attr?.values).trim();
-  if (valueText && !/^https?:\/\//i.test(valueText)) return valueText;
+  if (valueText && !isUrlLikeString(valueText)) return valueText;
+  if (isUrlLikeString(valueText)) return getFriendlyUrlLabel(valueText);
   return label;
 };
 
@@ -379,15 +398,16 @@ const renderAttributeValueNode = (attr: any) => {
   if (!textValue) return null;
 
   if (/^https?:\/\//i.test(textValue)) {
+    const friendlyLabel = getFriendlyUrlLabel(textValue);
     return (
       <a
         href={textValue}
         target="_blank"
         rel="noreferrer"
-        className="inline-flex items-center gap-1 text-sm font-medium text-[color:var(--catalog-accent)] underline decoration-[color:var(--catalog-accent)]/30 underline-offset-2 transition hover:decoration-[color:var(--catalog-accent)]"
+        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)] px-3 py-1.5 text-sm font-medium text-[color:var(--catalog-accent-ink)] transition hover:border-[color:var(--catalog-accent)] hover:bg-white"
       >
         <ExternalLink className="h-3.5 w-3.5" />
-        {textValue}
+        <span className="truncate">{friendlyLabel}</span>
       </a>
     );
   }
@@ -530,24 +550,8 @@ export function ProductModal({
     };
   }, [attributeLookup, attachments, product]);
 
-  const [draft, setDraft] = useState(() => ({
-    description: productDescription,
-    ean: attributeSnapshot.ean,
-    baseRef: attributeSnapshot.baseRef,
-    visibleOnWeb: attributeSnapshot.visibleOnWeb,
-    price: attributeSnapshot.price !== undefined ? String(attributeSnapshot.price) : '',
-    weight: attributeSnapshot.weight,
-    collection: attributeSnapshot.collection,
-    range: attributeSnapshot.range,
-    status: getProductStatus(product),
-  }));
-
-  useEffect(() => {
-    setCurrentImageIndex(0);
-    setActiveVariantIndex(0);
-    setActiveTab('contenido');
-    setSaveState('idle');
-    setDraft({
+  const initialDraft = useMemo(
+    () => ({
       description: productDescription,
       ean: attributeSnapshot.ean,
       baseRef: attributeSnapshot.baseRef,
@@ -557,8 +561,19 @@ export function ProductModal({
       collection: attributeSnapshot.collection,
       range: attributeSnapshot.range,
       status: getProductStatus(product),
-    });
-  }, [product.id, productDescription, attributeSnapshot, product]);
+    }),
+    [attributeSnapshot, product, productDescription]
+  );
+
+  const [draft, setDraft] = useState(() => initialDraft);
+
+  useEffect(() => {
+    setCurrentImageIndex(0);
+    setActiveVariantIndex(0);
+    setActiveTab('contenido');
+    setSaveState('idle');
+    setDraft(initialDraft);
+  }, [initialDraft, product.id]);
 
   useEffect(() => {
     if (!variantRows.length) {
@@ -598,6 +613,29 @@ export function ProductModal({
   const completeness = Math.round(((requiredFieldState.length - missingFields.length) / requiredFieldState.length) * 100);
   const completenessLabel = `${completeness}%`;
   const productStatus = STATUS_META[draft.status];
+
+  const hasUnsavedChanges = useMemo(
+    () =>
+      draft.description !== initialDraft.description ||
+      draft.ean !== initialDraft.ean ||
+      draft.baseRef !== initialDraft.baseRef ||
+      draft.visibleOnWeb !== initialDraft.visibleOnWeb ||
+      draft.price !== initialDraft.price ||
+      draft.weight !== initialDraft.weight ||
+      draft.collection !== initialDraft.collection ||
+      draft.range !== initialDraft.range ||
+      draft.status !== initialDraft.status,
+    [draft, initialDraft]
+  );
+
+  const confirmDiscardChanges = (action: () => void) => {
+    if (hasUnsavedChanges) {
+      const confirmed = window.confirm('¿Descartar los cambios? Los datos no guardados se perderán.');
+      if (!confirmed) return;
+    }
+
+    action();
+  };
 
   const savePayload = () => ({
     description: draft.description,
@@ -934,7 +972,7 @@ export function ProductModal({
               </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="grid gap-3 xl:grid-cols-2">
               {fileAttributes.map((attr: any, index: number) => {
                 const href = getAttributeHref(attr);
                 const label = getAttributeLabel(attr);
@@ -945,23 +983,25 @@ export function ProductModal({
                 return (
                   <div
                     key={attr.definitionId || attr.name || `${label}-${index}`}
-                    className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
+                    className="flex h-full min-h-[112px] flex-col justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
                   >
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[color:var(--catalog-accent-soft)] text-[color:var(--catalog-accent)]">
-                      <FileText className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium text-slate-900">{label}</p>
-                        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                          {kind}
-                        </span>
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[color:var(--catalog-accent-soft)] text-[color:var(--catalog-accent)]">
+                        <FileText className="h-5 w-5" />
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-slate-500">{title}</p>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-medium text-slate-900">{label}</p>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                            {kind}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-xs text-slate-500">{title}</p>
+                      </div>
                     </div>
 
                     {href ? (
-                      <div className="flex items-center gap-2">
+                      <div className="mt-3 flex items-center gap-2">
                         <a
                           href={href}
                           target="_blank"
@@ -983,7 +1023,7 @@ export function ProductModal({
                         ) : null}
                       </div>
                     ) : (
-                      <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
+                      <span className="mt-3 inline-flex w-fit rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
                         Sin enlace
                       </span>
                     )}
@@ -1175,7 +1215,7 @@ export function ProductModal({
                   <ChevronRight className="h-4 w-4 text-slate-300" />
                   <button
                     type="button"
-                    onClick={() => onNavigateBreadcrumb?.('product', product.id)}
+                    onClick={() => confirmDiscardChanges(() => onNavigateBreadcrumb?.('product', product.id))}
                     className="truncate font-medium text-slate-900 transition hover:text-slate-700"
                   >
                     {productName}
@@ -1187,7 +1227,9 @@ export function ProductModal({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={onPrev}
+                onClick={() => {
+                  if (onPrev) confirmDiscardChanges(onPrev);
+                }}
                 disabled={!onPrev}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -1196,7 +1238,9 @@ export function ProductModal({
               </button>
               <button
                 type="button"
-                onClick={onNext}
+                onClick={() => {
+                  if (onNext) confirmDiscardChanges(onNext);
+                }}
                 disabled={!onNext}
                 className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -1215,7 +1259,7 @@ export function ProductModal({
               </button>
               <button
                 type="button"
-                onClick={onClose}
+                onClick={() => confirmDiscardChanges(onClose)}
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
                 aria-label="Cerrar ficha"
               >
@@ -1232,10 +1276,12 @@ export function ProductModal({
                 {isVariantProduct && parentProduct ? (
                   <button
                     type="button"
-                    onClick={() => {
-                      onNavigateBreadcrumb?.('product', parentProduct.id);
-                      setActiveTab('variantes');
-                    }}
+                    onClick={() =>
+                      confirmDiscardChanges(() => {
+                        onNavigateBreadcrumb?.('product', parentProduct.id);
+                        setActiveTab('variantes');
+                      })
+                    }
                     className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />

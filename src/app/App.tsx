@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { LoadingSpinner } from '../shared/ui/LoadingSpinner';
 import { ErrorMessage } from '../shared/ui/ErrorMessage';
 import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
@@ -12,6 +12,7 @@ import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantBranding } from '../hooks/useTenantBranding';
 import type { CatalogSortKey, QuickFilter } from '../features/catalog/model/catalogTypes';
+import type { Product } from '../features/catalog/api/productService';
 import LoginPage from '../pages/LoginPage';
 import SuperadminPage from '../pages/SuperadminPage';
 import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
@@ -20,6 +21,8 @@ import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
 function CatalogPage() {
   const { profile, signOut } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const branding = useTenantBranding(profile?.tenantId);
   const currentUserRole =
     profile?.role === 'superadmin' || profile?.role === 'admin'
@@ -99,22 +102,70 @@ function CatalogPage() {
   } = useCatalog();
   const [activeLocale, setActiveLocale] = useState('ES');
   const visibleCatalogCount = products.filter(product => normalizeKey(product.type) !== 'variant').length;
+  const queryParams = new URLSearchParams(location.search);
+  const productIdFromUrl = queryParams.get('producto');
   const selectedDisplayProductId = selectedProduct?.variantParentId || selectedProduct?.id || '';
   const selectedProductIndex = selectedProduct
     ? displayProducts.findIndex(product => product.id === selectedDisplayProductId)
     : -1;
+  const updateProductUrl = (productId: string | null) => {
+    const nextParams = new URLSearchParams(location.search);
+    if (productId) {
+      nextParams.set('producto', productId);
+    } else {
+      nextParams.delete('producto');
+    }
+
+    const nextSearch = nextParams.toString();
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true, preventScrollReset: true }
+    );
+  };
+
+  const handleOpenProduct = (product: Product) => {
+    setSelectedProduct(product);
+    updateProductUrl(product.id);
+  };
+
+  const handleCloseProduct = () => {
+    setSelectedProduct(null);
+    updateProductUrl(null);
+  };
+
   const handlePrevProduct = () => {
     if (selectedProductIndex <= 0) return;
-    setSelectedProduct(displayProducts[selectedProductIndex - 1] || null);
+    const previousProduct = displayProducts[selectedProductIndex - 1] || null;
+    if (!previousProduct) return;
+    handleOpenProduct(previousProduct);
   };
+
   const handleNextProduct = () => {
     if (selectedProductIndex < 0 || selectedProductIndex >= displayProducts.length - 1) return;
-    setSelectedProduct(displayProducts[selectedProductIndex + 1] || null);
+    const nextProduct = displayProducts[selectedProductIndex + 1] || null;
+    if (!nextProduct) return;
+    handleOpenProduct(nextProduct);
   };
   const handleSaveProduct = (patch: Record<string, unknown>) => {
     if (!selectedProduct) return;
     updateProduct(selectedProduct.id, patch as any);
   };
+
+  useEffect(() => {
+    if (!productIdFromUrl || selectedProduct) return;
+
+    const target =
+      products.find(product => product.id === productIdFromUrl) ||
+      displayProducts.find(product => product.id === productIdFromUrl) ||
+      products.find(product => Array.isArray((product as any).variants) && (product as any).variants.some((variant: any) => variant.id === productIdFromUrl));
+
+    if (target) {
+      setSelectedProduct(target);
+    }
+  }, [productIdFromUrl, products, displayProducts, selectedProduct, setSelectedProduct]);
 
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId);
@@ -264,7 +315,7 @@ function CatalogPage() {
                         key={product.id}
                         product={product}
                         categoryLabelMap={categoryLabelMap}
-                        onViewDetails={setSelectedProduct}
+                        onViewDetails={handleOpenProduct}
                       />
                     ))}
                   </div>
@@ -323,7 +374,7 @@ function CatalogPage() {
         <ProductModal
           product={selectedProduct}
           categoryLabelMap={categoryLabelMap}
-          onClose={() => setSelectedProduct(null)}
+          onClose={handleCloseProduct}
           onPrev={selectedProductIndex > 0 ? handlePrevProduct : undefined}
           onNext={selectedProductIndex >= 0 && selectedProductIndex < displayProducts.length - 1 ? handleNextProduct : undefined}
           activeLocale={activeLocale}
@@ -340,24 +391,24 @@ function CatalogPage() {
             const parent = selectedProduct?.variantParentId
               ? products.find(product => product.id === selectedProduct.variantParentId)
               : selectedProduct;
-            if (parent) setSelectedProduct(parent);
+            if (parent) handleOpenProduct(parent);
           }}
           onNavigateBreadcrumb={(segment, value) => {
             if (segment === 'catalog') {
-              setSelectedProduct(null);
+              handleCloseProduct();
               return;
             }
 
             if (segment === 'category' && value) {
               setSelectedCategory(value);
-              setSelectedProduct(null);
+              handleCloseProduct();
               return;
             }
 
             if (segment === 'product' && value) {
               const target = products.find(product => product.id === value) || selectedProduct?.variants?.find((variant: any) => variant.id === value);
               if (target) {
-                setSelectedProduct(target);
+                handleOpenProduct(target);
               }
             }
           }}
