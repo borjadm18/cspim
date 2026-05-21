@@ -71,11 +71,19 @@ const parsePublicOrganizations = () => {
           : [];
 
       return entries
-        .map(item => ({
-          id: typeof item.id === 'string' ? item.id.trim() : '',
-          label: typeof item.label === 'string' && item.label.trim() ? item.label.trim() : (typeof item.id === 'string' ? item.id.trim() : ''),
-          description: typeof item.description === 'string' && item.description.trim() ? item.description.trim() : undefined,
-        }))
+        .map(item => {
+          const id = typeof item.id === 'string' ? item.id.trim() : '';
+          const label = cleanText(typeof item.label === 'string' && item.label.trim() ? item.label.trim() : id).trim();
+          return {
+            id,
+            label: id === 'tres-griferia'
+              ? 'TRES Grifería'
+              : id === 'tres-griferia-test'
+                ? 'TRES Grifería TEST'
+                : label,
+            description: typeof item.description === 'string' && item.description.trim() ? cleanText(item.description).trim() : undefined,
+          };
+        })
         .filter(item => item.id && item.label);
     } catch {
       // fall back below
@@ -97,8 +105,12 @@ const parsePublicOrganizations = () => {
     const parsed = JSON.parse(rawPrivate);
     return Object.keys(parsed || {}).map(id => ({
       id,
-      label: id,
-        description: 'Organización configurada en Bluestone',
+      label: id === 'tres-griferia'
+        ? 'TRES Grifería'
+        : id === 'tres-griferia-test'
+          ? 'TRES Grifería TEST'
+          : id,
+      description: 'Organización configurada en Bluestone',
     }));
   } catch {
     return [

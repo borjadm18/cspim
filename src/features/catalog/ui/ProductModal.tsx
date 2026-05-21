@@ -462,7 +462,7 @@ export function ProductModal({
       value: draft.visibleOnWeb === undefined || draft.visibleOnWeb === null ? '' : 'present',
     },
     {
-      label: 'Precio (â‚¬)',
+      label: 'Precio (€)',
       value: draft.price.trim() && !Number.isNaN(Number(draft.price.replace(',', '.'))) ? draft.price : '',
     },
   ];
@@ -954,7 +954,7 @@ export function ProductModal({
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acabado</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">SKU</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">EAN</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Precio (â‚¬)</th>
+                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Precio (€)</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Peso (kg)</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Estado</th>
                   <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acciones</th>

@@ -6,6 +6,11 @@ export type CatalogTenantOption = {
 
 export type CatalogAccessMode = 'admin' | 'client';
 
+const CANONICAL_LABELS: Record<string, string> = {
+  'tres-griferia': 'TRES Grifería',
+  'tres-griferia-test': 'TRES Grifería TEST',
+};
+
 const DEFAULT_PUBLIC_TENANTS: CatalogTenantOption[] = [
   {
     id: 'default',
@@ -14,19 +19,33 @@ const DEFAULT_PUBLIC_TENANTS: CatalogTenantOption[] = [
   },
 ];
 
+const cleanText = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+
+  try {
+    const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes) || text;
+  } catch {
+    return text;
+  }
+};
+
 const normalizeTenantOption = (value: unknown): CatalogTenantOption | null => {
   if (!value || typeof value !== 'object') return null;
 
   const candidate = value as Partial<CatalogTenantOption> & Record<string, unknown>;
   const id = typeof candidate.id === 'string' && candidate.id.trim() ? candidate.id.trim() : '';
-  const label = typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label.trim() : id;
+  const fallbackLabel = CANONICAL_LABELS[id] || id;
+  const label = cleanText(typeof candidate.label === 'string' && candidate.label.trim() ? candidate.label.trim() : fallbackLabel).trim();
 
   if (!id || !label) return null;
 
   return {
     id,
-    label,
-    description: typeof candidate.description === 'string' && candidate.description.trim() ? candidate.description.trim() : undefined,
+    label: CANONICAL_LABELS[id] || label,
+    description: typeof candidate.description === 'string' && candidate.description.trim() ? cleanText(candidate.description).trim() : undefined,
   };
 };
 

@@ -1,4 +1,4 @@
-﻿type PublicOrganization = {
+type PublicOrganization = {
   id: string;
   label: string;
   description?: string;
@@ -19,6 +19,30 @@ const sendJson = (statusCode: number, body: unknown) =>
     },
   });
 
+const cleanText = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  const text = String(value);
+  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+
+  try {
+    const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
+    return new TextDecoder('utf-8').decode(bytes) || text;
+  } catch {
+    return text;
+  }
+};
+
+const canonicalLabels: Record<string, string> = {
+  'tres-griferia': 'TRES Grifería',
+  'tres-griferia-test': 'TRES Grifería TEST',
+};
+
+const normalizeOrganization = (id: string, label?: unknown, description?: unknown): PublicOrganization => ({
+  id,
+  label: canonicalLabels[id] || cleanText(label ?? id).trim() || id,
+  description: typeof description === 'string' && description.trim() ? cleanText(description).trim() : undefined,
+});
+
 const parsePublicOrganizations = (): PublicOrganization[] => {
   const rawPublic = process.env.VITE_CATALOG_TENANTS_JSON;
   if (rawPublic) {
@@ -33,11 +57,10 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
       return entries
         .map(item => {
           const id = typeof item.id === 'string' ? item.id.trim() : '';
-          const label = typeof item.label === 'string' && item.label.trim() ? item.label.trim() : id;
-          const description = typeof item.description === 'string' && item.description.trim() ? item.description.trim() : undefined;
-          return { id, label, description };
+          if (!id) return null;
+          return normalizeOrganization(id, item.label, item.description);
         })
-        .filter(item => Boolean(item.id && item.label));
+        .filter((item): item is PublicOrganization => Boolean(item?.id && item?.label));
     } catch {
       // fall back below
     }
@@ -56,11 +79,9 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
 
   try {
     const parsed = JSON.parse(rawPrivate) as Record<string, unknown>;
-    return Object.keys(parsed || {}).map(id => ({
-      id,
-      label: id,
-        description: 'Organización configurada en Bluestone',
-    }));
+    return Object.keys(parsed || {}).map(id =>
+      normalizeOrganization(id, canonicalLabels[id] || id, 'Organización configurada en Bluestone')
+    );
   } catch {
     return [
       {
@@ -81,4 +102,3 @@ export async function GET() {
 export async function OPTIONS() {
   return new Response(null, { status: 200, headers: corsHeaders });
 }
-

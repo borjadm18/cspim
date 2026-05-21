@@ -293,10 +293,13 @@ const loadLocalFallbackProducts = async () => {
 };
 
 export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
-  const allowRemoteInDev = import.meta.env.VITE_CATALOG_ALLOW_REMOTE_DEV === 'true';
-  const shouldUseRemoteCatalog = import.meta.env.PROD || (import.meta.env.DEV && CATALOG_SOURCE_MODE === 'remote' && allowRemoteInDev);
+  const allowLocalSampleInDev = import.meta.env.DEV && CATALOG_SOURCE_MODE !== 'remote';
+  const shouldUseRemoteCatalog = import.meta.env.PROD || CATALOG_SOURCE_MODE === 'remote';
 
   if (!shouldUseRemoteCatalog) {
+    if (import.meta.env.PROD) {
+      throw new Error('Production catalog must use remote Bluestone data');
+    }
     return loadLocalFallbackProducts();
   }
 
@@ -323,7 +326,7 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
 
     return products.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name));
   } catch (error) {
-    if (import.meta.env.DEV && CATALOG_SOURCE_MODE !== 'remote') {
+    if (allowLocalSampleInDev) {
       return loadLocalFallbackProducts();
     }
 
