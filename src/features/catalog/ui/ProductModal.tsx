@@ -596,22 +596,6 @@ export function ProductModal({
   const productId = cleanText(product.id);
   const shortId = productId.slice(0, 8) + (productId.length > 8 ? '…' : '');
 
-  const requiredFieldState = [
-    { label: 'EAN', value: draft.ean },
-    { label: 'Referencia base acabado', value: draft.baseRef },
-    {
-      label: 'Visible en web',
-      value: draft.visibleOnWeb === undefined || draft.visibleOnWeb === null ? '' : 'present',
-    },
-    {
-      label: 'Precio (€)',
-      value: draft.price.trim() && !Number.isNaN(Number(draft.price.replace(',', '.'))) ? draft.price : '',
-    },
-  ];
-
-  const missingFields = requiredFieldState.filter(item => !String(item.value || '').trim()).map(item => item.label);
-  const completeness = Math.round(((requiredFieldState.length - missingFields.length) / requiredFieldState.length) * 100);
-  const completenessLabel = `${completeness}%`;
   const productStatus = STATUS_META[draft.status];
 
   const hasUnsavedChanges = useMemo(
@@ -1328,21 +1312,6 @@ export function ProductModal({
                 <p className="text-xs text-slate-500">
                   Actualizado {lastUpdate || '—'} · {updatedBy}
                 </p>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                <span className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">Completitud</span>
-                <div className="h-1 flex-1 rounded-full bg-gray-200">
-                  <div className="h-1 rounded-full bg-green-600 transition-all" style={{ width: `${completeness}%` }} />
-                </div>
-                <span className="text-xs font-medium text-green-700">{completenessLabel}</span>
-                {missingFields.length > 0 ? (
-                  <span className="text-xs text-red-600">· Falta: {missingFields.join(', ')}</span>
-                ) : (
-                  <span className="text-xs text-slate-500">Todo completo</span>
-                )}
               </div>
             </div>
 
