@@ -1,4 +1,4 @@
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -10,8 +10,9 @@ export default function LoginPage() {
   const branding = useTenantBranding(profile?.tenantId);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   if (user) {
     return <Navigate to="/" replace />;
@@ -20,8 +21,9 @@ export default function LoginPage() {
   const tenantName = branding?.tenantName ?? 'Content Store';
 
   const handleLogin = async () => {
+    if (loading) return;
     setLoading(true);
-    setError(null);
+    setAuthError(null);
 
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email,
@@ -29,10 +31,20 @@ export default function LoginPage() {
     });
 
     if (signInError) {
-      setError('Email o contraseña incorrectos');
+      setAuthError('Credenciales incorrectas. Revisa tu email y contraseña.');
     }
 
     setLoading(false);
+  };
+
+  const handleEmailChange = (value: string) => {
+    setEmail(value);
+    if (authError) setAuthError(null);
+  };
+
+  const handlePasswordChange = (value: string) => {
+    setPassword(value);
+    if (authError) setAuthError(null);
   };
 
   return (
@@ -88,10 +100,10 @@ export default function LoginPage() {
         <h2 className="mb-1 text-[19px] font-medium text-gray-900">Bienvenido</h2>
         <p className="mb-7 text-[12px] text-[#A8A5A0]">Introduce tus credenciales para continuar</p>
 
-        {error && (
+        {authError && (
           <div className="mb-3 flex items-center gap-[6px] rounded-sm border border-[#F09595] bg-[#FCEBEB] px-[11px] py-2 text-[11px] text-[#A32D2D]">
             <AlertCircle size={14} className="flex-shrink-0" />
-            {error}
+            {authError}
           </div>
         )}
 
@@ -102,8 +114,9 @@ export default function LoginPage() {
           <input
             type="email"
             value={email}
-            onChange={event => setEmail(event.target.value)}
+            onChange={event => handleEmailChange(event.target.value)}
             placeholder="tu@empresa.com"
+            autoComplete="email"
             className="w-full rounded-sm border border-[#E2DED8] bg-[#FAFAF8] px-[11px] py-[9px] text-[13px] text-gray-900 outline-none transition-colors placeholder:text-[#CCC9C3] focus:border-[#0F2238] focus:bg-white"
           />
         </div>
@@ -112,26 +125,38 @@ export default function LoginPage() {
           <label className="mb-[5px] block text-[9px] font-medium uppercase tracking-[0.1em] text-[#A8A5A0]">
             Contraseña
           </label>
-          <input
-            type="password"
-            value={password}
-            onChange={event => setPassword(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') {
-                void handleLogin();
-              }
-            }}
-            placeholder="••••••••"
-            className="w-full rounded-sm border border-[#E2DED8] bg-[#FAFAF8] px-[11px] py-[9px] text-[13px] text-gray-900 outline-none transition-colors placeholder:text-[#CCC9C3] focus:border-[#0F2238] focus:bg-white"
-          />
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={event => handlePasswordChange(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  void handleLogin();
+                }
+              }}
+              placeholder="••••••••"
+              autoComplete="current-password"
+              className="w-full rounded-sm border border-[#E2DED8] bg-[#FAFAF8] px-[11px] py-[9px] pr-10 text-[13px] text-gray-900 outline-none transition-colors placeholder:text-[#CCC9C3] focus:border-[#0F2238] focus:bg-white"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(value => !value)}
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 transition hover:text-gray-600"
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
         </div>
 
         <button
           type="button"
           onClick={() => void handleLogin()}
           disabled={loading || !email || !password}
-          className="mt-[6px] w-full rounded-sm bg-[#0F2238] py-[10px] text-[9px] font-medium uppercase tracking-[0.12em] text-white transition-colors hover:bg-[#1B3A5C] disabled:cursor-not-allowed disabled:opacity-35"
+          className="mt-[6px] inline-flex w-full items-center justify-center gap-2 rounded-sm bg-[#0F2238] py-[10px] text-[9px] font-medium uppercase tracking-[0.12em] text-white transition-colors hover:bg-[#1B3A5C] disabled:cursor-not-allowed disabled:opacity-35"
         >
+          {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
           {loading ? 'Verificando…' : 'Entrar'}
         </button>
 

@@ -34,6 +34,7 @@ export type BrandOption = {
 export type MediaFilter = 'all' | 'with-assets' | 'without-assets' | 'images-only' | 'documents-only' | 'mixed';
 
 export type QuickFilter = 'all' | 'images' | 'attachments' | 'categories' | 'assets';
+export type CatalogSortKey = 'relevance' | 'name_asc' | 'name_desc' | 'sku_asc' | 'updated_desc' | 'variants_desc';
 
 export type CatalogSettings = {
   pageSize: number;
@@ -89,6 +90,7 @@ export type CatalogState = {
   selectedStatus: string;
   selectedMediaFilter: MediaFilter;
   selectedQuickFilter: QuickFilter;
+  sortBy: CatalogSortKey;
   currentPage: number;
   isSettingsOpen: boolean;
   brandOptions: BrandOption[];

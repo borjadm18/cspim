@@ -11,6 +11,7 @@ import { DEFAULT_CATALOG_THEME_ID } from '../../../shared/theme/catalogThemes';
 import type {
   BrandOption,
   CatalogSettings,
+  CatalogSortKey,
   CategoryOption,
   MediaFilter,
   QuickFilter,
@@ -27,7 +28,6 @@ import {
   buildTypeOptions,
   buildStatusOptions,
   groupProductsForDisplay,
-  hasImages,
   hasDocuments,
   hasMixedMedia,
   filterProducts,
@@ -106,6 +106,41 @@ const isSameSnapshot = (a: SavedViewSnapshot, b: SavedViewSnapshot) =>
 
 const createSavedViewId = () => `view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const MAX_RECENT_SEARCHES = 6;
+const DEFAULT_SORT_BY: CatalogSortKey = 'relevance';
+
+const getProductUpdatedAt = (product: Product) => {
+  const raw = (product as any).updatedAt || (product as any).lastUpdate || (product as any).createDate || '';
+  const time = Date.parse(String(raw));
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const getProductVariantCount = (product: Product) => {
+  const variants = Array.isArray((product as any).variants) ? (product as any).variants.length : 0;
+  return variants;
+};
+
+const compareStrings = (a: unknown, b: unknown) =>
+  String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base', numeric: true });
+
+const sortCatalogProducts = (products: Product[], sortBy: CatalogSortKey) => {
+  const next = [...products];
+
+  switch (sortBy) {
+    case 'name_asc':
+      return next.sort((a, b) => compareStrings(a.name, b.name));
+    case 'name_desc':
+      return next.sort((a, b) => compareStrings(b.name, a.name));
+    case 'sku_asc':
+      return next.sort((a, b) => compareStrings(a.sku || (a as any).number, b.sku || (b as any).number));
+    case 'updated_desc':
+      return next.sort((a, b) => getProductUpdatedAt(b) - getProductUpdatedAt(a) || compareStrings(a.name, b.name));
+    case 'variants_desc':
+      return next.sort((a, b) => getProductVariantCount(b) - getProductVariantCount(a) || compareStrings(a.name, b.name));
+    case 'relevance':
+    default:
+      return next;
+  }
+};
 
 const encodeShareableState = (state: SerializedViewState) =>
   window.btoa(unescape(encodeURIComponent(JSON.stringify(state))));
@@ -239,6 +274,7 @@ export function useCatalog() {
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [selectedMediaFilter, setSelectedMediaFilter] = useState<MediaFilter>('all');
   const [selectedQuickFilter, setSelectedQuickFilter] = useState<QuickFilter>('all');
+  const [sortBy, setSortBy] = useState<CatalogSortKey>(DEFAULT_SORT_BY);
   const [settingsByTenant, setSettingsByTenant] = useState<Record<string, CatalogSettings>>(() => loadSettingsByTenant());
   const [savedViews, setSavedViews] = useState<SavedView[]>(() => loadSavedViews());
   const [recentSearches, setRecentSearches] = useState<string[]>(() => loadRecentSearches());
@@ -482,19 +518,7 @@ export function useCatalog() {
   );
 
   const displayProducts = useMemo(() => groupProductsForDisplay(filteredProducts), [filteredProducts]);
-
-  const rankedProducts = useMemo(() => {
-    const score = (product: Product) => {
-      let value = 0;
-      if (hasImages(product)) value += 200;
-      if (hasDocuments(product)) value += 100;
-      if (hasAssets(product)) value += 20;
-      value += Math.min((product.images?.length || 0) + ((product as any).attachments?.length || 0), 9);
-      return value;
-    };
-
-    return [...displayProducts].sort((a, b) => score(b) - score(a) || a.name.localeCompare(b.name, 'es'));
-  }, [displayProducts]);
+  const sortedProducts = useMemo(() => sortCatalogProducts(displayProducts, sortBy), [displayProducts, sortBy]);
 
   const currentSnapshot = useMemo(
     () =>
@@ -533,7 +557,7 @@ export function useCatalog() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, selectedName, selectedNumber, selectedBrand, selectedCategory, selectedType, selectedStatus, selectedMediaFilter, selectedQuickFilter]);
+  }, [searchTerm, selectedName, selectedNumber, selectedBrand, selectedCategory, selectedType, selectedStatus, selectedMediaFilter, selectedQuickFilter, sortBy]);
 
   const handleClearFilters = () => {
     setSelectedBrand('all');
@@ -670,9 +694,9 @@ export function useCatalog() {
     setSettings(DEFAULT_SETTINGS);
   };
 
-  const totalPages = Math.ceil(rankedProducts.length / settings.pageSize);
+  const totalPages = Math.ceil(sortedProducts.length / settings.pageSize);
   const startIndex = (currentPage - 1) * settings.pageSize;
-  const paginatedProducts = rankedProducts.slice(startIndex, startIndex + settings.pageSize);
+  const paginatedProducts = sortedProducts.slice(startIndex, startIndex + settings.pageSize);
 
   const imageCount = filteredProducts.reduce((sum, product) => sum + (product.images?.length || 0), 0);
   const attachmentCount = filteredProducts.reduce((sum, product) => sum + (((product as any).attachments || []).length || 0), 0);
@@ -705,6 +729,8 @@ export function useCatalog() {
     selectedQuickFilter,
     setSelectedMediaFilter,
     setSelectedQuickFilter,
+    sortBy,
+    setSortBy,
     selectedTenantId,
     setSelectedTenantId,
     currentPage,
@@ -718,7 +744,7 @@ export function useCatalog() {
     typeOptions,
     statusOptions,
     filteredProducts,
-    displayProducts: rankedProducts,
+    displayProducts: sortedProducts,
     handleClearFilters,
     totalPages,
     paginatedProducts,

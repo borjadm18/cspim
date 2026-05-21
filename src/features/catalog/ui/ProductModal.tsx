@@ -188,6 +188,7 @@ const normalizeKey = (value: string) => normalizeText(value).toLowerCase();
 
 const attributeKeys = (attr: any) =>
   [
+    attr.key,
     attr.definitionName,
     attr.name,
     attr.label,
@@ -422,13 +423,15 @@ export function ProductModal({
   const canSave = canEditVisibility;
   const isVariantProduct = normalizeKey(product.type) === 'variant';
   const isGroupProduct = normalizeKey(product.type) === 'group';
+  const showHistoryTab = false;
+  const showChannelsTab = false;
   const variantSourceProduct = parentProduct && parentProduct.id !== product.id ? parentProduct : product;
   const variantRows = useMemo(() => (Array.isArray((variantSourceProduct as any).variants) ? (variantSourceProduct as any).variants : []), [
     variantSourceProduct,
   ]);
   const showVariantsTab = normalizeKey(product.type) === 'group' || isVariantProduct;
 
-  const images = (product.images || []).filter(Boolean);
+  const images = [...(product.images || [])].filter(Boolean).reverse();
   const attachments = (product as any).attachments || [];
   const variants = variantRows;
   const categoryIds = Array.isArray((product as any).categories) ? (product as any).categories : [];
@@ -501,16 +504,16 @@ export function ProductModal({
       product,
       attributeLookup,
       ['baseRef', 'referenciaBaseAcabado', 'referencia base acabado', 'reference', 'ref'],
-      ['referencia base acabado', 'base ref', 'referencia', 'ref']
+      ['referenciaBaseAcabado', 'referencia base acabado', 'base ref', 'referencia', 'ref']
     );
     const visibleOnWeb = firstAvailableBoolean(
       product,
       attributeLookup,
-      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'visible en web', 'esta web'],
-      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'visible en web', 'esta web']
+      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web'],
+      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web']
     );
-    const price = firstAvailableNumber(product, attributeLookup, ['price', 'precio', 'pvp'], ['precio', 'pvp']);
-    const weight = firstAvailableText(product, attributeLookup, ['weight', 'peso', 'peso (kg)'], ['peso', 'peso (kg)']);
+    const price = firstAvailableNumber(product, attributeLookup, ['price', 'precio', 'pvp'], ['price', 'precio', 'pvp']);
+    const weight = firstAvailableText(product, attributeLookup, ['weight', 'peso', 'peso (kg)'], ['weight', 'peso', 'peso (kg)']);
     const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colección'], ['collection', 'coleccion', 'colección']);
     const range = firstAvailableText(product, attributeLookup, ['range', 'gama'], ['range', 'gama']);
     const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|técnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
@@ -568,14 +571,15 @@ export function ProductModal({
   }, [product.id, variantRows]);
 
   const activeVariant = variants[activeVariantIndex];
-  const variantImages = Array.isArray(activeVariant?.images) ? activeVariant.images.filter(Boolean) : [];
+  const variantImages = Array.isArray(activeVariant?.images) ? [...activeVariant.images].filter(Boolean).reverse() : [];
   const imageSet = variantImages.length ? variantImages : images;
   const currentImage = imageSet[currentImageIndex] || imageSet[0] || images[0];
   const currentImageUrl = currentImage?.url || fallbackImage(productName);
   const currentImageFileName = currentImage?.alt || `${productName || 'imagen'}.jpg`;
   const lastUpdate = formatDate((product as any).lastUpdate || (product as any).updatedAt || (product as any).createDate);
   const updatedBy = cleanText((product as any).updatedBy || (product as any).lastUpdatedBy || (product as any).authorEmail || 'admin@demo.com');
-  const shortId = cleanText(product.id).slice(0, 12) + (cleanText(product.id).length > 12 ? '…' : '');
+  const productId = cleanText(product.id);
+  const shortId = productId.slice(0, 8) + (productId.length > 8 ? '…' : '');
 
   const requiredFieldState = [
     { label: 'EAN', value: draft.ean },
@@ -1242,8 +1246,16 @@ export function ProductModal({
                   {productName}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID: {shortId}
-                  <span className="font-mono text-slate-600">{shortId}</span>
+                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID:
+                  <button
+                    type="button"
+                    onClick={() => void navigator.clipboard.writeText(productId)}
+                    className="ml-1 inline-flex items-center gap-1 font-mono text-slate-600 transition hover:text-slate-900"
+                    title={productId}
+                  >
+                    {shortId}
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
                 </p>
               </div>
 
@@ -1293,8 +1305,8 @@ export function ProductModal({
                 {[
                   { id: 'contenido', label: 'Contenido' },
                   ...(showVariantsTab ? [{ id: 'variantes', label: 'Variantes', count: variants.length }] : []),
-                  { id: 'historial', label: 'Historial' },
-                  { id: 'canales', label: 'Canales' },
+                  ...(showHistoryTab ? [{ id: 'historial', label: 'Historial' }] : []),
+                  ...(showChannelsTab ? [{ id: 'canales', label: 'Canales' }] : []),
                 ].map(tab => {
                   const isActive = activeTab === tab.id;
                   return (
@@ -1326,7 +1338,7 @@ export function ProductModal({
                   className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
                 >
                   <Eye className="h-4 w-4" />
-                  Vista previa
+                  Ver imagen principal
                 </button>
                 <button
                   type="button"

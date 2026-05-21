@@ -208,8 +208,21 @@ export function CatalogHeader({
               onKeyDown={event => {
                 if (event.key === 'Enter') onSearchSubmit(searchTerm);
               }}
-              className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-4 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
+              className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-12 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
             />
+            {searchTerm.trim().length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  onSearchTermChange('');
+                  onSearchSubmit('');
+                }}
+                aria-label="Limpiar búsqueda"
+                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
 
           {recentSearches.length > 0 && (
