@@ -104,8 +104,30 @@ const normalizeAttributeValue = (attribute: any): any => {
   return value;
 };
 
+const IMAGE_PRIORITY_KEYWORDS = {
+  positive: ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render'],
+  negative: ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'técnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimensión', 'dimension'],
+};
+
+const scoreImageForDisplay = (image: ProductImage) => {
+  const descriptor = cleanText([image.alt, image.downloadUrl, image.url].filter(Boolean).join(' ')).toLowerCase();
+  let score = 0;
+
+  if (image.isPrimary) score += 1000;
+  for (const keyword of IMAGE_PRIORITY_KEYWORDS.positive) {
+    if (descriptor.includes(keyword)) score += 80;
+  }
+  for (const keyword of IMAGE_PRIORITY_KEYWORDS.negative) {
+    if (descriptor.includes(keyword)) score -= 260;
+  }
+  if (/(\.jpe?g|\.png|\.webp)(\?|$)/i.test(descriptor)) score += 5;
+  if (!image.alt || cleanText(image.alt).trim() === 'Imagen') score -= 10;
+
+  return score;
+};
+
 const sortImagesByPriority = (items: ProductImage[]) =>
-  [...items].sort((a, b) => Number(Boolean(b.isPrimary)) - Number(Boolean(a.isPrimary)));
+  [...items].sort((a, b) => scoreImageForDisplay(b) - scoreImageForDisplay(a));
 
 const extractTextCandidates = (value: unknown, preferredLocales: string[] = ['en', 'es']): string => {
   if (value === null || value === undefined) return '';

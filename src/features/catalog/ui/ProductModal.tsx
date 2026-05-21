@@ -14,7 +14,6 @@ import {
   Languages,
   Layers,
   Plus,
-  Tag,
   Upload,
   X,
 } from 'lucide-react';
@@ -291,18 +290,48 @@ const firstAvailableBoolean = (product: Product, lookup: Map<string, any>, topLe
 
 const normalizeAttachmentName = (attachment: any) => cleanText(attachment.name || attachment.fileName || 'Documento');
 
-const EditableLabel = ({ children, required = false }: { children: string; required?: boolean }) => (
-  <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">
-    {children}
-    {required ? <span className="ml-1 text-red-500">*</span> : null}
-  </p>
-);
 
 const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }) => (
   <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
     {text}
   </div>
 );
+
+const renderAttributeValueNode = (attr: any) => {
+  const rawValue = attr?.displayValue ?? attr?.value ?? attr?.values;
+  const boolValue = parseBooleanValue(rawValue);
+  const textValue = formatValue(rawValue).trim();
+
+  if (boolValue !== undefined) {
+    return (
+      <span
+        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
+          boolValue ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+        }`}
+      >
+        {boolValue ? 'Sí' : 'No'}
+      </span>
+    );
+  }
+
+  if (!textValue) return null;
+
+  if (/^https?:\/\//i.test(textValue)) {
+    return (
+      <a
+        href={textValue}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 text-sm font-medium text-[color:var(--catalog-accent)] underline decoration-[color:var(--catalog-accent)]/30 underline-offset-2 transition hover:decoration-[color:var(--catalog-accent)]"
+      >
+        <ExternalLink className="h-3.5 w-3.5" />
+        {textValue}
+      </a>
+    );
+  }
+
+  return <p className="text-sm font-medium text-slate-900">{textValue}</p>;
+};
 
 export function ProductModal({
   product,
@@ -366,13 +395,41 @@ export function ProductModal({
     });
   }, [product.attributes]);
 
-  const attributeLookup = useMemo(() => buildAttributeLookup(attributes), [attributes]);
+    const attributeLookup = useMemo(() => buildAttributeLookup(attributes), [attributes]);
+  const attributeGroups = useMemo(() => {
+    const groups = new Map<string, any[]>();
+
+    for (const attribute of attributes as any[]) {
+      const value = attribute?.displayValue ?? attribute?.value ?? attribute?.values;
+      if (!isRenderableValue(value)) continue;
+
+      const groupName = normalizeText(attribute.group || attribute.groupName || '').trim() || 'Sin grupo';
+      const label = normalizeText(attribute.definitionName || attribute.name || attribute.label || attribute.definitionId || 'Atributo');
+      const nextAttribute = {
+        ...attribute,
+        label,
+        group: groupName,
+      };
+
+      if (!groups.has(groupName)) {
+        groups.set(groupName, []);
+      }
+
+      groups.get(groupName)!.push(nextAttribute);
+    }
+
+    return Array.from(groups.entries()).map(([groupName, groupAttributes]) => ({
+      groupName,
+      attributes: groupAttributes,
+    }));
+  }, [attributes]);
+
   const attributeSnapshot = useMemo(() => {
     const ean = firstAvailableText(
       product,
       attributeLookup,
       ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean']
+      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
     );
     const baseRef = firstAvailableText(
       product,
@@ -551,45 +608,6 @@ export function ProductModal({
   };
 
   const StatusIcon = productStatus.icon;
-
-  const renderField = (
-    label: string,
-    value: string,
-    onChange: (next: string) => void,
-    opts?: { required?: boolean; placeholder?: string; type?: string }
-  ) => (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-      <EditableLabel required={opts?.required}>{label}</EditableLabel>
-      <input
-        type={opts?.type || 'text'}
-        value={value}
-        placeholder={opts?.placeholder || '—'}
-        onChange={event => onChange(event.currentTarget.value)}
-        className="mt-2 w-full border-b border-dashed border-slate-300 bg-transparent pb-1 text-sm font-medium text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-800 focus:border-slate-800"
-      />
-    </div>
-  );
-
-  const visibleToggle = (
-    <button
-      type="button"
-      onClick={() => {
-        const next = !draft.visibleOnWeb;
-        setDraft(previous => ({ ...previous, visibleOnWeb: next }));
-      }}
-      className={`inline-flex h-[18px] w-8 items-center rounded-full px-[2px] transition ${
-        draft.visibleOnWeb ? 'bg-green-600' : 'bg-gray-300'
-      }`}
-      aria-pressed={Boolean(draft.visibleOnWeb)}
-      aria-label="Visible en web"
-    >
-      <span
-        className={`h-3.5 w-3.5 rounded-full bg-white shadow-sm transition ${
-          draft.visibleOnWeb ? 'translate-x-3.5' : 'translate-x-0'
-        }`}
-      />
-    </button>
-  );
 
   const contentPanel = (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
@@ -786,7 +804,7 @@ export function ProductModal({
             >
               <Upload className="mb-3 h-7 w-7 text-slate-400" />
               <span className="text-sm font-medium text-slate-900">Añadir ficha técnica</span>
-              <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación de soporte</span>
+              <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación</span>
             </button>
           )}
         </div>
@@ -795,136 +813,46 @@ export function ProductModal({
       <section className="space-y-4 bg-white px-5 py-5">
         <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Descripción comercial</p>
-            <span className="text-xs text-slate-500">{draft.description.length} / 500 caracteres</span>
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {attributes.length} atributos con valor · {attributeGroups.length} grupos
+              </p>
+            </div>
           </div>
-          <textarea
-            value={draft.description}
-            onChange={event => setDraft(previous => ({ ...previous, description: event.currentTarget.value.slice(0, 500) }))}
-            placeholder="Escribe una descripción del producto para el canal web…"
-            className="min-h-[120px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-800 focus:bg-white"
-          />
-          {!draft.description.trim() ? (
-            <p className="mt-2 text-xs text-red-600">Campo obligatorio para publicar</p>
+
+          {attributeGroups.length > 0 ? (
+            <div className="space-y-4">
+              {attributeGroups.map(group => (
+                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
+                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {group.attributes.map((attr: any) => (
+                      <div
+                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+                      >
+                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
+                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
+                        </p>
+                        <div className="mt-2 min-h-[22px]">
+                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
-            <p className="mt-2 text-xs text-slate-400">Texto visible en el canal web y exportaciones internas.</p>
+            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+              No hay atributos con valor en este producto
+            </div>
           )}
-        </div>
-
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Identificación</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {renderField('EAN', draft.ean, next => setDraft(previous => ({ ...previous, ean: next })), {
-              required: true,
-              placeholder: '—',
-            })}
-            {renderField('Referencia base acabado', draft.baseRef, next => setDraft(previous => ({ ...previous, baseRef: next })), {
-              required: true,
-              placeholder: '—',
-            })}
-            {renderField('Peso (kg)', draft.weight, next => setDraft(previous => ({ ...previous, weight: next })), {
-              placeholder: '—',
-            })}
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-              <EditableLabel required>Visible en web</EditableLabel>
-              <div className="mt-3 flex items-center gap-3">
-                {canEditVisibility ? (
-                  <>
-                    {visibleToggle}
-                    <span className="text-sm font-medium text-slate-900">
-                      {draft.visibleOnWeb ? 'Sí, visible' : 'No, oculto'}
-                    </span>
-                  </>
-                ) : (
-                  <span
-                    className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-                      draft.visibleOnWeb ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-                    }`}
-                  >
-                    {draft.visibleOnWeb ? 'Visible' : 'No visible'}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos técnicos</p>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {renderField('Colección', draft.collection, next => setDraft(previous => ({ ...previous, collection: next })), {
-              placeholder: '—',
-            })}
-            {renderField('Gama', draft.range, next => setDraft(previous => ({ ...previous, range: next })), {
-              placeholder: '—',
-            })}
-            {renderField('Precio (€)', draft.price, next => setDraft(previous => ({ ...previous, price: next })), {
-              required: true,
-              placeholder: '—',
-              type: 'number',
-            })}
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
-              <EditableLabel>Ficha técnica</EditableLabel>
-              {attributeSnapshot.technicalSheet ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    void triggerDownload(
-                      attributeSnapshot.technicalSheet.downloadUrl || attributeSnapshot.technicalSheet.url,
-                      normalizeAttachmentName(attributeSnapshot.technicalSheet)
-                    )
-                  }
-                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-[color:var(--catalog-accent)]/20 bg-[color:var(--catalog-accent-soft)]/45 px-3 py-1.5 text-xs font-semibold text-[color:var(--catalog-accent)] transition hover:border-[color:var(--catalog-accent)]/35 hover:bg-[color:var(--catalog-accent-soft)]"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Abrir documento
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={onAddDocument}
-                  className="mt-3 inline-flex items-center gap-2 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-400"
-                >
-                  <Upload className="h-3.5 w-3.5" />
-                  Añadir ficha técnica
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Categorías</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {categoryIds.length > 0 ? (
-              categoryIds.map((categoryId: string, index: number) => (
-                <span
-                  key={categoryId}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-700"
-                  title={categoryId}
-                >
-                  <Tag className="h-3.5 w-3.5 text-slate-400" />
-                  {cleanText(categoryLabelMap[categoryId] || `Categoría ${index + 1}`)}
-                </span>
-              ))
-            ) : (
-              <span className="text-sm text-slate-500">Sin categorías vinculadas</span>
-            )}
-            <button
-              type="button"
-              className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-sm text-slate-500 transition hover:border-slate-400 hover:text-slate-700"
-              onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
-            >
-              <Plus className="h-3.5 w-3.5" />
-              Añadir
-            </button>
-          </div>
         </div>
       </section>
     </div>
@@ -1179,7 +1107,7 @@ export function ProductModal({
                   {productName}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
-                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID:{' '}
+                  SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID: {shortId}
                   <span className="font-mono text-slate-600">{shortId}</span>
                 </p>
               </div>
@@ -1220,7 +1148,7 @@ export function ProductModal({
                 {missingFields.length > 0 ? (
                   <span className="text-xs text-red-600">· Falta: {missingFields.join(', ')}</span>
                 ) : (
-                  <span className="text-xs text-slate-500">• Todo completo</span>
+                  <span className="text-xs text-slate-500">Todo completo</span>
                 )}
               </div>
             </div>

@@ -198,11 +198,33 @@ const scoreForRepresentative = (product: Product) => {
   return value;
 };
 
+const scoreImageForDisplay = (image: any) => {
+  const descriptor = cleanText([image?.alt, image?.downloadUrl, image?.url].filter(Boolean).join(' ')).toLowerCase();
+  let score = 0;
+
+  if (image?.isPrimary) score += 1000;
+
+  for (const keyword of ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render']) {
+    if (descriptor.includes(keyword)) score += 80;
+  }
+
+  for (const keyword of ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'técnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimensión', 'dimension']) {
+    if (descriptor.includes(keyword)) score -= 260;
+  }
+
+  if (/(\.jpe?g|\.png|\.webp)(\?|$)/i.test(descriptor)) score += 5;
+  if (!image?.alt || cleanText(image.alt).trim() === 'Imagen') score -= 10;
+
+  return score;
+};
+
 const scoreForMediaSource = (product: Product) => {
   const images = Array.isArray(product.images) ? product.images : [];
   const primaryImages = images.filter(image => Boolean(image?.isPrimary)).length;
-  let value = primaryImages * 1000;
-  value += images.length * 50;
+  const bestImageScore = images.reduce((best, image) => Math.max(best, scoreImageForDisplay(image)), Number.NEGATIVE_INFINITY);
+  let value = Number.isFinite(bestImageScore) ? bestImageScore * 10 : 0;
+  value += primaryImages * 120;
+  value += images.length * 25;
   value += hasDocuments(product) ? 10 : 0;
   value += hasAssets(product) ? 5 : 0;
   value += getProductTypeKey(product) === 'group' ? 20 : 0;
