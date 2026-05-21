@@ -1,3 +1,4 @@
+/// <reference types="node" />
 type PublicOrganization = {
   id: string;
   label: string;
@@ -102,3 +103,4 @@ export async function GET() {
 export async function OPTIONS() {
   return new Response(null, { status: 200, headers: corsHeaders });
 }
+
