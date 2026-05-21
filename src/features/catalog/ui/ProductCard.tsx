@@ -34,7 +34,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
 
   return (
     <article
-      className="group flex h-full flex-col overflow-hidden rounded-[18px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)]"
+      className="group relative flex h-[34rem] flex-col overflow-hidden rounded-[18px] border border-slate-200/80 bg-white shadow-[0_10px_24px_rgba(15,23,42,0.05)] transition-all duration-300 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_18px_36px_rgba(15,23,42,0.08)]"
       role="button"
       tabIndex={0}
       onClick={() => onViewDetails(product)}
@@ -60,7 +60,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
 
       </div>
 
-      <div className="flex flex-1 flex-col space-y-3 p-4">
+      <div className="flex flex-1 flex-col space-y-3 p-4 pb-20">
         {variantSwatches.length > 0 ? (
           <div className="flex items-center gap-1.5">
             {visibleSwatches.map((variant: any, index: number) => {
@@ -106,16 +106,18 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onViewDetails(product);
-          }}
-          className="mt-auto inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] text-sm font-semibold text-white transition-colors hover:opacity-95"
-        >
-          Ver detalles
-        </button>
+        <div className="absolute inset-x-4 bottom-4">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onViewDetails(product);
+            }}
+            className="inline-flex h-10 w-full items-center justify-center rounded-[14px] border border-[var(--catalog-accent)] bg-[var(--catalog-accent)] text-sm font-semibold text-white transition-colors hover:opacity-95"
+          >
+            Ver detalles
+          </button>
+        </div>
       </div>
     </article>
   );

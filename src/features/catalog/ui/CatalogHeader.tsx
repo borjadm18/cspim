@@ -26,6 +26,7 @@ interface CatalogHeaderProps {
   selectedMediaFilter: MediaFilter;
   onStatFilterClick: (filter: 'images' | 'attachments' | 'images-only' | 'categories' | 'assets') => void;
   onOpenSettings: () => void;
+  onSignOut: () => void;
 }
 
 export function CatalogHeader({
@@ -52,6 +53,7 @@ export function CatalogHeader({
   selectedMediaFilter,
   onStatFilterClick,
   onOpenSettings,
+  onSignOut,
 }: CatalogHeaderProps) {
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [tenantSearch, setTenantSearch] = useState('');
@@ -182,7 +184,11 @@ export function CatalogHeader({
               <Settings2 className="h-4 w-4" />
               Configuración
             </button>
-            <button className="inline-flex items-center gap-2 rounded-full bg-[#d90429] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#b70322]">
+            <button
+              type="button"
+              onClick={onSignOut}
+              className="inline-flex items-center gap-2 rounded-full bg-[#d90429] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#b70322]"
+            >
               <LogOut className="h-4 w-4" />
               Salir
             </button>

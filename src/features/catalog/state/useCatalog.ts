@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { fetchProducts, type Product } from '../api/productService';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchProducts, getCachedProducts, setCachedProducts, type Product } from '../api/productService';
 import { loadOrganizationSettings, saveOrganizationSettings } from '../api/organizationSettings';
 import {
   CATALOG_ACCESS_MODE,
@@ -251,6 +251,7 @@ export function useCatalog() {
   const [hasAppliedSharedView, setHasAppliedSharedView] = useState(false);
   const [tenantOptions, setTenantOptions] = useState<CatalogTenantOption[]>(() => CATALOG_TENANT_OPTIONS);
   const [hydratedTenantSettings, setHydratedTenantSettings] = useState<Record<string, boolean>>({});
+  const requestTokenRef = useRef(0);
 
   useEffect(() => {
     void reloadProducts();
@@ -354,15 +355,29 @@ export function useCatalog() {
   }, [hasAppliedSharedView]);
 
   const reloadProducts = async () => {
+    const token = ++requestTokenRef.current;
     try {
-      setLoading(true);
+      const cachedProducts = getCachedProducts(selectedTenantId);
+      if (cachedProducts && cachedProducts.length > 0) {
+        setProducts(cachedProducts);
+        setLoading(false);
+        setError(null);
+      } else {
+        setLoading(true);
+      }
+
       setError(null);
       const data = await fetchProducts(selectedTenantId);
+      if (requestTokenRef.current !== token) return;
       setProducts(data);
+      setCachedProducts(selectedTenantId, data);
     } catch (err) {
+      if (requestTokenRef.current !== token) return;
       setError(err instanceof Error ? err.message : 'Error desconocido al cargar productos');
     } finally {
-      setLoading(false);
+      if (requestTokenRef.current === token) {
+        setLoading(false);
+      }
     }
   };
 

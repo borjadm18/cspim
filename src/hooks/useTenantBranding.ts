@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 type TenantBranding = {
+  tenantName: string | null;
   logoUrl: string | null;
   primaryColor: string;
   primaryHover: string;
@@ -48,13 +49,14 @@ export function useTenantBranding(tenantId: string | undefined) {
     const loadBranding = async () => {
       const { data } = await supabase
         .from('tenants')
-        .select('primary_color, primary_hover, primary_text, logo_url')
+        .select('name, primary_color, primary_hover, primary_text, logo_url')
         .eq('id', tenantId)
         .single();
 
       if (!isMounted || !data) return;
 
       const nextBranding: TenantBranding = {
+        tenantName: data.name ?? null,
         logoUrl: data.logo_url ?? null,
         primaryColor: data.primary_color || '#1B3A5C',
         primaryHover: data.primary_hover || '#152E4A',

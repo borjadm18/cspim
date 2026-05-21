@@ -19,7 +19,7 @@ import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
 import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
 function CatalogPage() {
-  const { profile } = useAuth();
+  const { profile, signOut } = useAuth();
   const branding = useTenantBranding(profile?.tenantId);
   const currentUserRole =
     profile?.role === 'superadmin' || profile?.role === 'admin'
@@ -181,6 +181,7 @@ function CatalogPage() {
         selectedMediaFilter={selectedMediaFilter}
         onStatFilterClick={handleStatFilterClick}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        onSignOut={signOut}
       />
 
       <main className="w-full px-4 py-4 sm:px-6 sm:py-6 xl:px-8">

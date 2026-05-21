@@ -47,6 +47,17 @@ export interface Product {
   [key: string]: any;
 }
 
+const PRODUCT_CACHE = new Map<string, Product[]>();
+
+export const getCachedProducts = (tenantId: string): Product[] | null => {
+  const cached = PRODUCT_CACHE.get(tenantId);
+  return cached ? [...cached] : null;
+};
+
+export const setCachedProducts = (tenantId: string, products: Product[]) => {
+  PRODUCT_CACHE.set(tenantId, [...products]);
+};
+
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
