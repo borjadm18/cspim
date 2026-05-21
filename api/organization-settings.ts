@@ -7,9 +7,29 @@ type StoredSettings = {
 };
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, PATCH, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
+};
+
+const getCorsHeaders = (request: Request) => {
+  const origin = request.headers.get('origin');
+  if (!origin) return corsHeaders;
+
+  const requestOrigin = new URL(request.url).origin;
+  const allowList = (process.env.CATALOG_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  if (origin === requestOrigin || allowList.includes('*') || allowList.includes(origin)) {
+    return {
+      ...corsHeaders,
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+    };
+  }
+
+  return corsHeaders;
 };
 
 const DEFAULT_SETTINGS: CatalogSettings = {
@@ -45,7 +65,7 @@ export async function GET(request: Request) {
     {
       status: 200,
       headers: {
-        ...corsHeaders,
+        ...getCorsHeaders(request),
         'Content-Type': 'application/json; charset=utf-8',
       },
     }
@@ -67,7 +87,7 @@ export async function PATCH(request: Request) {
       {
         status: 200,
         headers: {
-          ...corsHeaders,
+          ...getCorsHeaders(request),
           'Content-Type': 'application/json; charset=utf-8',
         },
       }
@@ -81,7 +101,7 @@ export async function PATCH(request: Request) {
       {
         status: 500,
         headers: {
-          ...corsHeaders,
+          ...getCorsHeaders(request),
           'Content-Type': 'application/json; charset=utf-8',
         },
       }
@@ -89,8 +109,8 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function OPTIONS() {
-  return new Response(null, { status: 200, headers: corsHeaders });
+export async function OPTIONS(request: Request) {
+  return new Response(null, { status: 200, headers: getCorsHeaders(request) });
 }
 
 

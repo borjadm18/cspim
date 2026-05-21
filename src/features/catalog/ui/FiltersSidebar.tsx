@@ -20,6 +20,7 @@ interface FiltersSidebarProps {
   onStatusChange: (status: string) => void;
   selectedMediaFilter: MediaFilter;
   onMediaFilterChange: (filter: MediaFilter) => void;
+  selectedQuickFilter: string;
   selectedName: string;
   onNameChange: (value: string) => void;
   selectedNumber: string;
@@ -114,6 +115,7 @@ export function FiltersSidebar({
   onStatusChange,
   selectedMediaFilter,
   onMediaFilterChange,
+  selectedQuickFilter,
   selectedName,
   onNameChange,
   selectedNumber,
@@ -165,6 +167,7 @@ export function FiltersSidebar({
     selectedType !== 'all',
     selectedStatus !== 'all',
     selectedMediaFilter !== 'all',
+    selectedQuickFilter !== 'all',
   ].filter(Boolean).length;
 
   return (

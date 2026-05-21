@@ -1,5 +1,5 @@
 import { ChevronDown, LogOut, Search, Settings2, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import type { CatalogAccessMode, MediaFilter, QuickFilter, TenantOption } from '../model/catalogTypes';
 
 interface CatalogHeaderProps {
@@ -25,6 +25,7 @@ interface CatalogHeaderProps {
   selectedQuickFilter: QuickFilter;
   selectedMediaFilter: MediaFilter;
   onStatFilterClick: (filter: 'images' | 'attachments' | 'images-only' | 'categories' | 'assets') => void;
+  sortControl?: ReactNode;
   onOpenSettings: () => void;
   onSignOut: () => void;
 }
@@ -52,6 +53,7 @@ export function CatalogHeader({
   selectedQuickFilter,
   selectedMediaFilter,
   onStatFilterClick,
+  sortControl,
   onOpenSettings,
   onSignOut,
 }: CatalogHeaderProps) {
@@ -254,7 +256,8 @@ export function CatalogHeader({
               Mostrando <span className="font-semibold text-slate-900">{filteredCount}</span> grupos de{' '}
               <span className="font-semibold text-slate-900">{productsCount}</span> productos
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {sortControl ? <div className="mr-1">{sortControl}</div> : null}
               {statButtons.map(button => (
                 <button
                   key={button.key}

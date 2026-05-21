@@ -48,6 +48,9 @@ export interface Product {
 }
 
 const PRODUCT_CACHE = new Map<string, Product[]>();
+const CATALOG_REQUEST_TIMEOUT_MS = 15000;
+const CATALOG_REQUEST_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 2000;
 
 export const getCachedProducts = (tenantId: string): Product[] | null => {
   const cached = PRODUCT_CACHE.get(tenantId);
@@ -68,6 +71,22 @@ const cleanText = (value: unknown) => {
     return new TextDecoder('utf-8').decode(bytes) || text;
   } catch {
     return text;
+  }
+};
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs = CATALOG_REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
   }
 };
 
@@ -326,33 +345,41 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
   }
 
   const apiUrl = `/api/catalog?tenant=${encodeURIComponent(tenantId)}`;
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+  let lastError: unknown = null;
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+  for (let attempt = 1; attempt <= CATALOG_REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetchWithTimeout(apiUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const products = Array.isArray(data) ? data : data.products || data.data || data.items || data.results || [];
+
+      if (!Array.isArray(products)) {
+        return [];
+      }
+
+      return products.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name));
+    } catch (error) {
+      lastError = error;
+      if (attempt < CATALOG_REQUEST_ATTEMPTS) {
+        await sleep(RETRY_BACKOFF_MS * attempt);
+      }
     }
-
-    const data = await response.json();
-    const products = Array.isArray(data) ? data : data.products || data.data || data.items || data.results || [];
-
-    if (!Array.isArray(products)) {
-      return [];
-    }
-
-    return products.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name));
-  } catch (error) {
-    if (allowLocalSampleInDev) {
-      return loadLocalFallbackProducts();
-    }
-
-    throw error;
   }
-};
 
+  if (allowLocalSampleInDev) {
+    return loadLocalFallbackProducts();
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Error desconocido al cargar productos');
+};

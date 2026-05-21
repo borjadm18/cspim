@@ -6,16 +6,36 @@ type PublicOrganization = {
 };
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
-const sendJson = (statusCode: number, body: unknown) =>
+const getCorsHeaders = (request: Request) => {
+  const origin = request.headers.get('origin');
+  if (!origin) return corsHeaders;
+
+  const requestOrigin = new URL(request.url).origin;
+  const allowList = (process.env.CATALOG_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  if (origin === requestOrigin || allowList.includes('*') || allowList.includes(origin)) {
+    return {
+      ...corsHeaders,
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+    };
+  }
+
+  return corsHeaders;
+};
+
+const sendJson = (statusCode: number, body: unknown, headers: Record<string, string> = corsHeaders) =>
   new Response(JSON.stringify(body), {
     status: statusCode,
     headers: {
-      ...corsHeaders,
+      ...headers,
       'Content-Type': 'application/json; charset=utf-8',
     },
   });
@@ -34,8 +54,8 @@ const cleanText = (value: unknown) => {
 };
 
 const canonicalLabels: Record<string, string> = {
-  'tres-griferia': 'TRES GriferÃ­a',
-  'tres-griferia-test': 'TRES GriferÃ­a TEST',
+  'tres-griferia': 'TRES Grifería',
+  'tres-griferia-test': 'TRES Grifería TEST',
 };
 
 const normalizeOrganization = (id: string, label?: unknown, description?: unknown): PublicOrganization => ({
@@ -73,7 +93,7 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
       {
         id: 'default',
         label: 'Tenant por defecto',
-        description: 'ConfiguraciÃ³n activa del backend',
+        description: 'Configuración activa del backend',
       },
     ];
   }
@@ -88,19 +108,19 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
       {
         id: 'default',
         label: 'Tenant por defecto',
-        description: 'ConfiguraciÃ³n activa del backend',
+        description: 'Configuración activa del backend',
       },
     ];
   }
 };
 
-export async function GET() {
+export async function GET(request: Request) {
   return sendJson(200, {
     organizations: parsePublicOrganizations(),
-  });
+  }, getCorsHeaders(request));
 }
 
-export async function OPTIONS() {
-  return new Response(null, { status: 200, headers: corsHeaders });
+export async function OPTIONS(request: Request) {
+  return new Response(null, { status: 200, headers: getCorsHeaders(request) });
 }
 

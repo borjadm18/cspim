@@ -169,6 +169,23 @@ function CatalogPage() {
 
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId);
+  const sortControl = (
+    <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-sm">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Ordenar por</span>
+      <select
+        value={sortBy}
+        onChange={event => setSortBy(event.target.value as CatalogSortKey)}
+        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
+      >
+        <option value="relevance">Relevancia</option>
+        <option value="name_asc">Nombre A→Z</option>
+        <option value="name_desc">Nombre Z→A</option>
+        <option value="sku_asc">SKU ascendente</option>
+        <option value="updated_desc">Actualizado más reciente</option>
+        <option value="variants_desc">Más acabados primero</option>
+      </select>
+    </div>
+  );
   const appStyle = {
     '--catalog-accent': theme.accent,
     '--catalog-accent-strong': theme.accentStrong,
@@ -231,6 +248,7 @@ function CatalogPage() {
         selectedQuickFilter={selectedQuickFilter}
         selectedMediaFilter={selectedMediaFilter}
         onStatFilterClick={handleStatFilterClick}
+        sortControl={sortControl}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onSignOut={signOut}
       />
@@ -259,6 +277,7 @@ function CatalogPage() {
                 onStatusChange={setSelectedStatus}
                 selectedMediaFilter={selectedMediaFilter}
                 onMediaFilterChange={setSelectedMediaFilter}
+                selectedQuickFilter={selectedQuickFilter}
                 selectedName={selectedName}
                 onNameChange={setSelectedName}
                 selectedNumber={selectedNumber}
@@ -289,26 +308,6 @@ function CatalogPage() {
                 </div>
               ) : (
                 <>
-                  <div className="mb-4 flex items-center justify-end">
-                    <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-sm">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        Ordenar por
-                      </span>
-                      <select
-                        value={sortBy}
-                        onChange={event => setSortBy(event.target.value as CatalogSortKey)}
-                        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
-                      >
-                        <option value="relevance">Relevancia</option>
-                        <option value="name_asc">Nombre A→Z</option>
-                        <option value="name_desc">Nombre Z→A</option>
-                        <option value="sku_asc">SKU ascendente</option>
-                        <option value="updated_desc">Actualizado más reciente</option>
-                        <option value="variants_desc">Más acabados primero</option>
-                      </select>
-                    </div>
-                  </div>
-
                   <div className={`grid grid-cols-1 ${gridGapClass} md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
                     {paginatedProducts.map(product => (
                       <ProductCard

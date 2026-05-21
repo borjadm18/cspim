@@ -451,7 +451,42 @@ export function ProductModal({
   ]);
   const showVariantsTab = normalizeKey(product.type) === 'group' || isVariantProduct;
 
-  const images = [...(product.images || [])].filter(Boolean).reverse();
+  const TECHNICAL_IMAGE_KEYWORDS = [
+    'plano',
+    'drawing',
+    'dibujo',
+    'esquema',
+    'technical',
+    'technical drawing',
+    'dimensiones',
+    'medidas',
+    'dwg',
+    'cad',
+    'line',
+  ];
+
+  const scoreCatalogImage = (image: ProductImage) => {
+    const descriptor = normalizeKey([image.alt, image.downloadUrl, image.url].filter(Boolean).join(' '));
+    let score = 0;
+
+    for (const keyword of ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render']) {
+      if (descriptor.includes(keyword)) score += 120;
+    }
+
+    for (const keyword of TECHNICAL_IMAGE_KEYWORDS) {
+      if (descriptor.includes(keyword)) score -= 500;
+    }
+
+    if (image.isPrimary) score += 160;
+    if (/\.(jpe?g|png|webp)(\?|$)/i.test(descriptor)) score += 8;
+    if (!image.alt || cleanText(image.alt).trim() === 'Imagen') score -= 12;
+
+    return score;
+  };
+
+  const sortCatalogImages = (items: ProductImage[]) => [...items].filter(Boolean).sort((a, b) => scoreCatalogImage(b) - scoreCatalogImage(a));
+
+  const images = sortCatalogImages(product.images || []);
   const attachments = (product as any).attachments || [];
   const variants = variantRows;
   const categoryIds = Array.isArray((product as any).categories) ? (product as any).categories : [];
@@ -586,7 +621,7 @@ export function ProductModal({
   }, [product.id, variantRows]);
 
   const activeVariant = variants[activeVariantIndex];
-  const variantImages = Array.isArray(activeVariant?.images) ? [...activeVariant.images].filter(Boolean).reverse() : [];
+  const variantImages = Array.isArray(activeVariant?.images) ? sortCatalogImages(activeVariant.images as ProductImage[]) : [];
   const imageSet = variantImages.length ? variantImages : images;
   const currentImage = imageSet[currentImageIndex] || imageSet[0] || images[0];
   const currentImageUrl = currentImage?.url || fallbackImage(productName);

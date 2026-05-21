@@ -32,9 +32,29 @@ type DefinitionRecord = {
 };
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
+};
+
+const getCorsHeaders = (request: Request) => {
+  const origin = request.headers.get('origin');
+  if (!origin) return corsHeaders;
+
+  const requestOrigin = new URL(request.url).origin;
+  const allowList = (process.env.CATALOG_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  if (origin === requestOrigin || allowList.includes('*') || allowList.includes(origin)) {
+    return {
+      ...corsHeaders,
+      'Access-Control-Allow-Origin': origin,
+      Vary: 'Origin',
+    };
+  }
+
+  return corsHeaders;
 };
 
 const DEFAULT_TENANT = 'default';
@@ -163,12 +183,18 @@ const getTokenUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://idp
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = 4) => {
+const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = 4, timeoutMs = 15000) => {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const response = await fetch(input, init);
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
       if (response.ok || (response.status !== 429 && response.status < 500)) {
         return response;
       }
@@ -176,6 +202,9 @@ const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attem
       lastError = new Error(`HTTP ${response.status}`);
     } catch (error) {
       lastError = error;
+    }
+    finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     if (attempt < attempts) {
@@ -458,9 +487,9 @@ const fetchProducts = async (tenant: TenantConfig) => {
   }
 };
 
-const sendJson = (res: any, statusCode: number, body: unknown) => {
+const sendJson = (res: any, statusCode: number, body: unknown, headers: Record<string, string> = corsHeaders) => {
   res.status(statusCode);
-  Object.entries(corsHeaders).forEach(([key, value]) => {
+  Object.entries(headers).forEach(([key, value]) => {
     res.setHeader(key, value);
   });
   res.setHeader('Content-Type', 'application/json');
@@ -469,7 +498,7 @@ const sendJson = (res: any, statusCode: number, body: unknown) => {
 
 export default async function handler(req: any, res: any) {
   if (req.method === 'OPTIONS') {
-    Object.entries(corsHeaders).forEach(([key, value]) => {
+    Object.entries(getCorsHeaders(req)).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
     res.status(200).end();
@@ -481,19 +510,16 @@ export default async function handler(req: any, res: any) {
     const tenant = getTenantConfig(tenantId);
 
     if (!tenant) {
-      sendJson(res, 400, { error: 'Tenant not configured' });
+      sendJson(res, 400, { error: 'Tenant not configured' }, getCorsHeaders(req));
       return;
     }
 
     const products = await fetchProducts(tenant);
-    sendJson(res, 200, { data: products });
+    sendJson(res, 200, { data: products }, getCorsHeaders(req));
   } catch (error) {
     sendJson(res, 500, {
       error: 'Failed to fetch catalog',
       message: error instanceof Error ? error.message : 'Unknown error',
-    });
+    }, getCorsHeaders(req));
   }
 }
-
-
-

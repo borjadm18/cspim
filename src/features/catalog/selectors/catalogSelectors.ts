@@ -150,6 +150,7 @@ export const getVariantSwatchColor = (product: Product, fallbackIndex = 0) => {
 const normalizeStatusKey = (value: unknown) => {
   const normalized = normalizeKey(value);
   if (!normalized) return '';
+  if (normalized.includes('playground') || normalized.includes('sandbox') || normalized.includes('test')) return 'draft';
   if (normalized.includes('draft') || normalized.includes('borrador')) return 'draft';
   if (normalized.includes('publish') || normalized.includes('published') || normalized.includes('public')) return 'published';
   if (normalized.includes('review') || normalized.includes('pending') || normalized.includes('to be published')) return 'to-be-published';
