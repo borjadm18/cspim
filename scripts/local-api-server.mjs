@@ -18,7 +18,9 @@ const definitionCache = new Map();
 const catalogCache = new Map();
 const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
 const organizationSettingsPath = path.join(rootDir, '.content-store-data', 'organization-settings.json');
+const localProductsPath = path.join(rootDir, 'src', 'dev', 'all-products-cursor.json');
 const organizationSettingsCache = new Map();
+let localProductsCache = null;
 
 const DEFAULT_SETTINGS = {
   pageSize: 30,
@@ -55,6 +57,15 @@ const persistOrganizationSettings = async () => {
   await ensureStorageDir();
   const payload = Object.fromEntries(organizationSettingsCache.entries());
   await fs.writeFile(organizationSettingsPath, JSON.stringify(payload, null, 2), 'utf8');
+};
+
+const loadLocalProducts = async () => {
+  if (localProductsCache) return localProductsCache;
+
+  const raw = await fs.readFile(localProductsPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  localProductsCache = Array.isArray(parsed) ? parsed : [];
+  return localProductsCache;
 };
 
 void loadOrganizationSettings();
@@ -563,6 +574,19 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+  }
+
+  if (url.pathname === '/api/local-products') {
+    try {
+      const products = await loadLocalProducts();
+      sendJson(res, 200, products);
+    } catch (error) {
+      sendJson(res, 500, {
+        error: 'Failed to load local products',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+    return;
   }
 
   if (url.pathname !== '/api/catalog') {

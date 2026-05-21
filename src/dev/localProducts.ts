@@ -1,7 +1,7 @@
 export const loadLocalProducts = async <T>(
   normalize: (value: unknown) => T | null
 ): Promise<T[]> => {
-  const response = await fetch(new URL('./all-products-cursor.json', import.meta.url));
+  const response = await fetch('/api/local-products');
   if (!response.ok) {
     throw new Error(`No se pudo cargar el archivo local de productos (${response.status})`);
   }
