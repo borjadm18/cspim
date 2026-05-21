@@ -1,4 +1,4 @@
-/// <reference types="node" />
+﻿/// <reference types="node" />
 type PublicOrganization = {
   id: string;
   label: string;
@@ -23,7 +23,7 @@ const sendJson = (statusCode: number, body: unknown) =>
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
@@ -34,8 +34,8 @@ const cleanText = (value: unknown) => {
 };
 
 const canonicalLabels: Record<string, string> = {
-  'tres-griferia': 'TRES Grifería',
-  'tres-griferia-test': 'TRES Grifería TEST',
+  'tres-griferia': 'TRES GriferÃ­a',
+  'tres-griferia-test': 'TRES GriferÃ­a TEST',
 };
 
 const normalizeOrganization = (id: string, label?: unknown, description?: unknown): PublicOrganization => ({
@@ -73,7 +73,7 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
       {
         id: 'default',
         label: 'Tenant por defecto',
-        description: 'Configuración activa del backend',
+        description: 'ConfiguraciÃ³n activa del backend',
       },
     ];
   }
@@ -81,14 +81,14 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
   try {
     const parsed = JSON.parse(rawPrivate) as Record<string, unknown>;
     return Object.keys(parsed || {}).map(id =>
-      normalizeOrganization(id, canonicalLabels[id] || id, 'Organización configurada en Bluestone')
+      normalizeOrganization(id, canonicalLabels[id] || id, 'OrganizaciÃ³n configurada en Bluestone')
     );
   } catch {
     return [
       {
         id: 'default',
         label: 'Tenant por defecto',
-        description: 'Configuración activa del backend',
+        description: 'ConfiguraciÃ³n activa del backend',
       },
     ];
   }
@@ -103,3 +103,4 @@ export async function GET() {
 export async function OPTIONS() {
   return new Response(null, { status: 200, headers: corsHeaders });
 }
+

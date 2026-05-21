@@ -1,4 +1,4 @@
-/// <reference types="node" />
+﻿/// <reference types="node" />
 type TenantConfig = {
   clientId: string;
   clientSecret: string;
@@ -49,7 +49,7 @@ const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
@@ -103,7 +103,7 @@ const extractLocalizedValue = (value: unknown, preferredLocales: string[] = ['es
 const formatAttributeValue = (value: unknown): string => {
   const resolved = extractTextCandidates(value);
   if (resolved) return resolved;
-  if (typeof value === 'boolean') return value ? 'S�' : 'No';
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
   if (typeof value === 'number') return String(value);
   return '';
 };
@@ -494,5 +494,6 @@ export default async function handler(req: any, res: any) {
     });
   }
 }
+
 
 
