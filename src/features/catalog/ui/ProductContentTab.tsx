@@ -1,4 +1,4 @@
-import { AlertCircle, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Plus, Upload } from 'lucide-react';
+import { AlertCircle, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Plus } from 'lucide-react';
 import type { ProductImage } from '../api/productService';
 import { cleanText, getVariantFinishLabel, getVariantSwatchColor } from '../selectors/catalogSelectors';
 import {
@@ -238,15 +238,12 @@ export function ProductContentTab({
           </div>
         </div>
 
-        {/* Documents card */}
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos</p>
-            <button type="button" onClick={onAddDocument} className="text-xs font-medium text-blue-600 transition hover:text-blue-700">
-              + Añadir
-            </button>
-          </div>
-          {attachments.length > 0 ? (
+        {/* Documents card — only shown when attachments exist */}
+        {attachments.length > 0 && (
+          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+            <div className="mb-4 flex items-center gap-3">
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos</p>
+            </div>
             <div className="space-y-3">
               {attachments.map((attachment: any, index: number) => {
                 const attachmentName = normalizeAttachmentName(attachment);
@@ -281,71 +278,18 @@ export function ProductContentTab({
                 );
               })}
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={onAddDocument}
-              className="flex min-h-[120px] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition hover:border-slate-400 hover:bg-slate-100"
-            >
-              <Upload className="mb-3 h-7 w-7 text-slate-400" />
-              <span className="text-sm font-medium text-slate-900">Añadir ficha técnica</span>
-              <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación</span>
-            </button>
-          )}
-        </div>
+          </div>
+        )}
       </section>
 
       {/* Right column: attributes */}
       <section className="space-y-4 bg-white px-5 py-5">
-        {/* Bluestone attributes */}
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {attributes.length} atributos con valor · {attributeGroups.length} grupos
-              </p>
-            </div>
-          </div>
-          {attributeGroups.length > 0 ? (
-            <div className="space-y-4">
-              {attributeGroups.map(group => (
-                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
-                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {group.attributes.map((attr: any) => (
-                      <div
-                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
-                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
-                      >
-                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
-                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
-                        </p>
-                        <div className="mt-2 min-h-[22px]">
-                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              No hay atributos con valor en este producto
-            </div>
-          )}
-        </div>
-
-        {/* File attributes */}
+        {/* File attributes — shown first for visibility */}
         {fileAttributes.length > 0 ? (
           <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
             <div className="mb-4 flex items-center justify-between gap-3">
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Archivos</p>
+                <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos y archivos</p>
                 <p className="mt-1 text-xs text-slate-500">{fileAttributes.length} ficheros vinculados</p>
               </div>
             </div>
@@ -416,6 +360,49 @@ export function ProductContentTab({
             </div>
           </div>
         ) : null}
+
+        {/* Bluestone attributes */}
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {attributes.length} atributos con valor · {attributeGroups.length} grupos
+              </p>
+            </div>
+          </div>
+          {attributeGroups.length > 0 ? (
+            <div className="space-y-4">
+              {attributeGroups.map(group => (
+                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
+                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {group.attributes.map((attr: any) => (
+                      <div
+                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+                      >
+                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
+                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
+                        </p>
+                        <div className="mt-2 min-h-[22px]">
+                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+              No hay atributos con valor en este producto
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

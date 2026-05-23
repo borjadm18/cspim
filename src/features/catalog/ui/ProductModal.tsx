@@ -13,6 +13,7 @@ import type { Product, ProductImage } from '../api/productService';
 import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel } from '../selectors/catalogSelectors';
 import { ProductContentTab } from './ProductContentTab';
 import { ProductVariantsPanel } from './ProductVariantsPanel';
+import { useToast } from '../../../shared/ui/toast';
 import {
   DEFAULT_LOCALES,
   TECHNICAL_IMAGE_KEYWORDS,
@@ -101,6 +102,8 @@ export function ProductModal({
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
   const [localLocale, setLocalLocale] = useState<LocaleCode>('ES');
   const [copiedSku, setCopiedSku] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const { showToast } = useToast();
   const hasUnsavedChangesRef = useRef(false);
   const onPrevRef = useRef(onPrev);
   const onNextRef = useRef(onNext);
@@ -303,31 +306,39 @@ export function ProductModal({
   };
 
   const exportPayload = () => {
-    const payload = {
-      id: product.id, name: product.name, sku: productSku,
-      description: draft.description, status: draft.status,
-      visibleOnWeb: draft.visibleOnWeb, ean: draft.ean, baseRef: draft.baseRef,
-      price: draft.price, collection: draft.collection, range: draft.range,
-      images: images.map(image => ({ url: image.url, alt: image.alt })),
-      attachments: attachments.map((attachment: any) => ({
-        name: cleanText(attachment.name || attachment.fileName || 'Documento'),
-        url: attachment.downloadUrl || attachment.url,
-        type: attachment.type,
-      })),
-      categories: categoryIds.map((categoryId: string) => ({
-        id: categoryId,
-        label: cleanText(categoryLabelMap[categoryId] || categoryId),
-      })),
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = `${productSku || productName || 'producto'}.json`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(objectUrl);
+    setIsExporting(true);
+    try {
+      const payload = {
+        id: product.id, name: product.name, sku: productSku,
+        description: draft.description, status: draft.status,
+        visibleOnWeb: draft.visibleOnWeb, ean: draft.ean, baseRef: draft.baseRef,
+        price: draft.price, collection: draft.collection, range: draft.range,
+        images: images.map(image => ({ url: image.url, alt: image.alt })),
+        attachments: attachments.map((attachment: any) => ({
+          name: cleanText(attachment.name || attachment.fileName || 'Documento'),
+          url: attachment.downloadUrl || attachment.url,
+          type: attachment.type,
+        })),
+        categories: categoryIds.map((categoryId: string) => ({
+          id: categoryId,
+          label: cleanText(categoryLabelMap[categoryId] || categoryId),
+        })),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = `${productSku || productName || 'producto'}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      showToast('Exportación completada', 'success');
+    } catch {
+      showToast('Error al exportar el producto', 'error');
+    } finally {
+      window.setTimeout(() => setIsExporting(false), 800);
+    }
   };
 
   const StatusIcon = productStatus.icon;
@@ -469,9 +480,9 @@ export function ProductModal({
                   <Eye className="h-4 w-4" />
                   Ver imagen principal
                 </button>
-                <button type="button" onClick={exportPayload} className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50">
+                <button type="button" onClick={exportPayload} disabled={isExporting} className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
                   <Download className="h-4 w-4" />
-                  Exportar
+                  {isExporting ? 'Exportando...' : 'Exportar'}
                 </button>
                 {canSave ? (
                   <button type="button" onClick={handleSave} className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-white transition ${saveState === 'saved' ? 'bg-green-800 hover:bg-green-700' : 'bg-slate-800 hover:bg-slate-700'}`}>

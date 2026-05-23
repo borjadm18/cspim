@@ -1,23 +1,38 @@
-import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, Package } from 'lucide-react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, Package, SlidersHorizontal, X } from 'lucide-react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { LoadingSpinner } from '../shared/ui/LoadingSpinner';
 import { ErrorMessage } from '../shared/ui/ErrorMessage';
+import { ErrorBoundary } from '../shared/ui/ErrorBoundary';
 import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
 import { ProductCard } from '../features/catalog/ui/ProductCard';
-import { ProductModal } from '../features/catalog/ui/ProductModal';
 import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
 import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
 import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantBranding } from '../hooks/useTenantBranding';
-import type { CatalogSortKey, QuickFilter } from '../features/catalog/model/catalogTypes';
-import type { Product } from '../features/catalog/api/productService';
-import LoginPage from '../pages/LoginPage';
-import SuperadminPage from '../pages/SuperadminPage';
-import { normalizeKey } from '../features/catalog/selectors/catalogSelectors';
+import type { CatalogSortKey } from '../features/catalog/model/catalogTypes';
+import { fetchProductDetail, type Product } from '../features/catalog/api/productService';
 import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
+import { ToastProvider, useToast } from '../shared/ui/toast';
 import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
+
+const LoginPage = lazy(() => import('../pages/LoginPage'));
+const SuperadminPage = lazy(() => import('../pages/SuperadminPage'));
+const ProductModal = lazy(() =>
+  import('../features/catalog/ui/ProductModal').then(m => ({ default: m.ProductModal }))
+);
+
+function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/60 px-3 py-1 text-xs font-medium text-[color:var(--catalog-accent)]">
+      {label}
+      <button type="button" onClick={onRemove} aria-label={`Quitar filtro ${label}`} className="ml-0.5 rounded-full p-0.5 opacity-70 transition hover:opacity-100">
+        <X className="h-3 w-3" />
+      </button>
+    </span>
+  );
+}
 
 function CatalogPage() {
   const { profile, signOut } = useAuth();
@@ -59,7 +74,8 @@ function CatalogPage() {
     selectedMediaFilter,
     setSelectedMediaFilter,
     selectedQuickFilter,
-    setSelectedQuickFilter,
+    selectedAttributeQuery,
+    setSelectedAttributeQuery,
     sortBy,
     setSortBy,
     currentPage,
@@ -67,7 +83,6 @@ function CatalogPage() {
     isSettingsOpen,
     setIsSettingsOpen,
     brandOptions,
-    categoryOptions,
     categoryTree,
     categoryLabelMap,
     typeOptions,
@@ -76,10 +91,6 @@ function CatalogPage() {
     handleClearFilters,
     totalPages,
     paginatedProducts,
-    imageCount,
-    attachmentCount,
-    assetCount,
-    withImagesCount,
     reloadProducts,
     settings,
     setSettings,
@@ -99,16 +110,35 @@ function CatalogPage() {
     commitSearchTerm,
     clearRecentSearches,
     updateProduct,
+    filteredGroupCount,
+    totalCatalogCount,
+    withImagesCount,
   } = useCatalog();
+  const { showToast } = useToast();
   const [activeLocale, setActiveLocale] = useState('ES');
-  const visibleCatalogCount = products.filter(product => normalizeKey(product.type) !== 'variant').length;
+  const [isProductDirty, setIsProductDirty] = useState(false);
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [isSavedViewsOpen, setIsSavedViewsOpen] = useState(false);
+  const activeFilterCount = [
+    searchTerm.trim(),
+    selectedName.trim(),
+    selectedNumber.trim(),
+    selectedAttributeQuery.trim(),
+    selectedBrand !== 'all',
+    selectedCategory !== 'all',
+    selectedType !== 'all',
+    selectedStatus !== 'all',
+    selectedMediaFilter !== 'all',
+  ].filter(Boolean).length;
+  const closingProductIdRef = useRef<string | null>(null);
+  const visibleCatalogCount = totalCatalogCount;
   const queryParams = new URLSearchParams(location.search);
   const productIdFromUrl = queryParams.get('producto');
   const selectedDisplayProductId = selectedProduct?.variantParentId || selectedProduct?.id || '';
   const selectedProductIndex = selectedProduct
     ? displayProducts.findIndex(product => product.id === selectedDisplayProductId)
     : -1;
-  const updateProductUrl = (productId: string | null) => {
+  const updateProductUrl = useCallback((productId: string | null) => {
     const nextParams = new URLSearchParams(location.search);
     if (productId) {
       nextParams.set('producto', productId);
@@ -124,17 +154,18 @@ function CatalogPage() {
       },
       { replace: true, preventScrollReset: true }
     );
-  };
+  }, [location.search, location.pathname, navigate]);
 
-  const handleOpenProduct = (product: Product) => {
+  const handleOpenProduct = useCallback((product: Product) => {
     setSelectedProduct(product);
     updateProductUrl(product.id);
-  };
+  }, [setSelectedProduct, updateProductUrl]);
 
-  const handleCloseProduct = () => {
+  const handleCloseProduct = useCallback(() => {
+    if (selectedProduct) closingProductIdRef.current = selectedProduct.id;
     setSelectedProduct(null);
     updateProductUrl(null);
-  };
+  }, [selectedProduct, setSelectedProduct, updateProductUrl]);
 
   const handlePrevProduct = () => {
     if (selectedProductIndex <= 0) return;
@@ -149,26 +180,102 @@ function CatalogPage() {
     if (!nextProduct) return;
     handleOpenProduct(nextProduct);
   };
-  const handleSaveProduct = (patch: Record<string, unknown>) => {
+  const handleSaveProduct = (patch: Partial<Product>) => {
     if (!selectedProduct) return;
-    updateProduct(selectedProduct.id, patch as any);
+    updateProduct(selectedProduct.id, patch);
+    showToast('Cambios guardados', 'success');
+  };
+
+  const handleTenantChange = (tenantId: string) => {
+    if (isProductDirty && selectedProduct) {
+      const confirmed = window.confirm('Hay cambios sin guardar en el producto abierto. ¿Cambiar de tenant de todas formas?');
+      if (!confirmed) return;
+    }
+    setSelectedTenantId(tenantId);
   };
 
   useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [currentPage]);
+
+  const productById = useMemo(
+    () => new Map(products.map(p => [p.id, p])),
+    [products]
+  );
+
+  useEffect(() => {
     if (!productIdFromUrl || selectedProduct) return;
+    if (closingProductIdRef.current === productIdFromUrl) {
+      closingProductIdRef.current = null;
+      return;
+    }
 
     const target =
-      products.find(product => product.id === productIdFromUrl) ||
+      productById.get(productIdFromUrl) ||
       displayProducts.find(product => product.id === productIdFromUrl) ||
-      products.find(product => Array.isArray((product as any).variants) && (product as any).variants.some((variant: any) => variant.id === productIdFromUrl));
+      (() => {
+        for (const [, p] of productById) {
+          if (Array.isArray(p.variants) && p.variants.some((v: { id?: string }) => v.id === productIdFromUrl)) {
+            return p;
+          }
+        }
+        return undefined;
+      })();
 
     if (target) {
       setSelectedProduct(target);
+      return;
     }
-  }, [productIdFromUrl, products, displayProducts, selectedProduct, setSelectedProduct]);
+
+    let cancelled = false;
+    const loadDirectProduct = async () => {
+      try {
+        const detail = await fetchProductDetail(selectedTenantId, productIdFromUrl);
+        if (!cancelled) setSelectedProduct(detail);
+      } catch {
+        // keep current page visible if deep-link load fails
+      }
+    };
+
+    void loadDirectProduct();
+    return () => {
+      cancelled = true;
+    };
+  }, [displayProducts, productById, productIdFromUrl, selectedProduct, selectedTenantId, setSelectedProduct]);
+
+  useEffect(() => {
+    if (!selectedProduct?.id) return;
+
+    let cancelled = false;
+    const selectedId = selectedProduct.id;
+
+    const loadProductDetail = async () => {
+      try {
+        const detail = await fetchProductDetail(selectedTenantId, selectedId);
+        if (cancelled) return;
+        setSelectedProduct(prev =>
+          prev && prev.id === selectedId
+            ? {
+                ...prev,
+                ...detail,
+                variants: prev.variants,
+              }
+            : prev
+        );
+      } catch {
+        // keep lightweight catalog version if detail fetch fails
+      }
+    };
+
+    void loadProductDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProduct?.id, selectedTenantId, setSelectedProduct]);
 
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
-  const theme = resolveCatalogTheme(settings.paletteId);
+  const theme = resolveCatalogTheme(settings.paletteId, settings.customAccentHex);
   const sortControl = (
     <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-sm">
       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Ordenar por</span>
@@ -178,11 +285,11 @@ function CatalogPage() {
         className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
       >
         <option value="relevance">Relevancia</option>
-        <option value="name_asc">Nombre A→Z</option>
-        <option value="name_desc">Nombre Z→A</option>
+        <option value="name_asc">{'Nombre A→Z'}</option>
+        <option value="name_desc">{'Nombre Z→A'}</option>
         <option value="sku_asc">SKU ascendente</option>
-        <option value="updated_desc">Actualizado más reciente</option>
-        <option value="variants_desc">Más acabados primero</option>
+        <option value="updated_desc">{'Actualizado más reciente'}</option>
+        <option value="variants_desc">{'Más acabados primero'}</option>
       </select>
     </div>
   );
@@ -194,31 +301,6 @@ function CatalogPage() {
     '--catalog-page-start': theme.pageStart,
     '--catalog-page-end': theme.pageEnd,
   } as React.CSSProperties;
-
-  const handleStatFilterClick = (filter: 'images' | 'attachments' | 'images-only' | 'categories' | 'assets') => {
-    if (filter === 'images-only') {
-      setSelectedQuickFilter('all');
-      setSelectedMediaFilter(selectedMediaFilter === 'images-only' ? 'all' : 'images-only');
-      return;
-    }
-
-    const nextQuickFilter: QuickFilter = filter === 'images'
-      ? 'images'
-      : filter === 'attachments'
-        ? 'attachments'
-        : filter === 'categories'
-          ? 'categories'
-          : 'assets';
-
-    const isActive =
-      (nextQuickFilter === 'images' && selectedQuickFilter === 'images') ||
-      (nextQuickFilter === 'attachments' && selectedQuickFilter === 'attachments') ||
-      (nextQuickFilter === 'categories' && selectedQuickFilter === 'categories') ||
-      (nextQuickFilter === 'assets' && selectedQuickFilter === 'assets');
-
-    setSelectedMediaFilter('all');
-    setSelectedQuickFilter(isActive ? 'all' : nextQuickFilter);
-  };
 
   return (
     <div
@@ -233,36 +315,27 @@ function CatalogPage() {
         onRecentSearchSelect={commitSearchTerm}
         onClearRecentSearches={clearRecentSearches}
         productsCount={visibleCatalogCount}
-        filteredCount={displayProducts.length}
-        imageCount={imageCount}
-        attachmentCount={attachmentCount}
-        withImagesCount={withImagesCount}
-        categoryCount={categoryOptions.length}
-        assetCount={assetCount}
+        filteredCount={filteredGroupCount}
         activeViewName={activeSavedView?.name ?? null}
         logoUrl={branding?.logoUrl ?? settings.logoUrl}
         tenantOptions={tenantOptions}
         selectedTenantId={selectedTenantId}
         accessMode={CATALOG_ACCESS_MODE}
-        onTenantChange={setSelectedTenantId}
-        selectedQuickFilter={selectedQuickFilter}
-        selectedMediaFilter={selectedMediaFilter}
-        onStatFilterClick={handleStatFilterClick}
+        onTenantChange={handleTenantChange}
         sortControl={sortControl}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onSignOut={signOut}
       />
 
-      <main className="w-full px-4 py-4 sm:px-6 sm:py-6 xl:px-8">
-        {loading ? (
-          <LoadingSpinner />
-        ) : error ? (
-          <ErrorMessage message={error} onRetry={reloadProducts} />
-        ) : (
-          <div className="grid gap-6 lg:grid-cols-[clamp(300px,20vw,360px)_minmax(0,1fr)]">
-            <aside className="hidden lg:block">
+      {isMobileFiltersOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Filtros">
+          <div className="absolute inset-0 bg-slate-900/50" onClick={() => setIsMobileFiltersOpen(false)} />
+          <div className="absolute left-0 top-0 flex h-full w-[min(100vw-3rem,24rem)] flex-col overflow-hidden bg-white shadow-2xl">
+            <div className="flex-1 overflow-y-auto p-4">
               <FiltersSidebar
                 products={products}
+                summaryProductsCount={totalCatalogCount}
+                summaryWithImagesCount={withImagesCount}
                 brandOptions={brandOptions}
                 selectedBrand={selectedBrand}
                 onBrandChange={setSelectedBrand}
@@ -282,11 +355,138 @@ function CatalogPage() {
                 onNameChange={setSelectedName}
                 selectedNumber={selectedNumber}
                 onNumberChange={setSelectedNumber}
+                selectedAttributeQuery={selectedAttributeQuery}
+                onAttributeQueryChange={setSelectedAttributeQuery}
+                onClearFilters={handleClearFilters}
+              />
+            </div>
+            <div className="border-t border-slate-200 bg-white p-4">
+              <button
+                type="button"
+                onClick={() => setIsMobileFiltersOpen(false)}
+                className="w-full rounded-2xl bg-[color:var(--catalog-accent)] py-3 text-sm font-semibold text-white transition hover:opacity-90"
+              >
+                Ver {filteredGroupCount} productos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setIsMobileFiltersOpen(true)}
+        className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2 inline-flex items-center gap-2 rounded-full bg-[color:var(--catalog-accent)] px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:opacity-90 lg:hidden"
+        aria-label="Abrir filtros"
+      >
+        <SlidersHorizontal className="h-4 w-4" />
+        Filtros
+        {activeFilterCount > 0 && (
+          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-bold text-[color:var(--catalog-accent)]">
+            {activeFilterCount}
+          </span>
+        )}
+      </button>
+
+      <main className="w-full px-4 py-4 sm:px-6 sm:py-6 xl:px-8">
+        {loading ? (
+          <LoadingSpinner />
+        ) : error ? (
+          <ErrorMessage message={error} onRetry={reloadProducts} />
+        ) : (
+          <div className="grid gap-6 lg:grid-cols-[clamp(300px,20vw,360px)_minmax(0,1fr)]">
+            <aside className="hidden lg:block">
+                <FiltersSidebar
+                  products={products}
+                  summaryProductsCount={totalCatalogCount}
+                  summaryWithImagesCount={withImagesCount}
+                  brandOptions={brandOptions}
+                selectedBrand={selectedBrand}
+                onBrandChange={setSelectedBrand}
+                categoryTree={categoryTree}
+                selectedCategory={selectedCategory}
+                onCategoryChange={setSelectedCategory}
+                typeOptions={typeOptions}
+                selectedType={selectedType}
+                onTypeChange={setSelectedType}
+                statusOptions={statusOptions}
+                selectedStatus={selectedStatus}
+                onStatusChange={setSelectedStatus}
+                selectedMediaFilter={selectedMediaFilter}
+                onMediaFilterChange={setSelectedMediaFilter}
+                selectedQuickFilter={selectedQuickFilter}
+                selectedName={selectedName}
+                onNameChange={setSelectedName}
+                selectedNumber={selectedNumber}
+                onNumberChange={setSelectedNumber}
+                selectedAttributeQuery={selectedAttributeQuery}
+                onAttributeQueryChange={setSelectedAttributeQuery}
                 onClearFilters={handleClearFilters}
               />
             </aside>
 
             <section className="min-w-0">
+              {activeFilterCount > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  {searchTerm.trim() ? <FilterChip label={`"${searchTerm}"`} onRemove={() => { setSearchTerm(''); commitSearchTerm(''); }} /> : null}
+                  {selectedName.trim() ? <FilterChip label={`Nombre: ${selectedName}`} onRemove={() => setSelectedName('')} /> : null}
+                  {selectedNumber.trim() ? <FilterChip label={`Número: ${selectedNumber}`} onRemove={() => setSelectedNumber('')} /> : null}
+                  {selectedAttributeQuery.trim() ? <FilterChip label={`Atributo: ${selectedAttributeQuery}`} onRemove={() => setSelectedAttributeQuery('')} /> : null}
+                  {selectedBrand !== 'all' ? <FilterChip label={brandOptions.find(b => b.id === selectedBrand)?.label ?? selectedBrand} onRemove={() => setSelectedBrand('all')} /> : null}
+                  {selectedCategory !== 'all' ? <FilterChip label={categoryLabelMap[selectedCategory] ?? selectedCategory} onRemove={() => setSelectedCategory('all')} /> : null}
+                  {selectedType !== 'all' ? <FilterChip label={typeOptions.find(t => t.id === selectedType)?.label ?? selectedType} onRemove={() => setSelectedType('all')} /> : null}
+                  {selectedStatus !== 'all' ? <FilterChip label={statusOptions.find(s => s.id === selectedStatus)?.label ?? selectedStatus} onRemove={() => setSelectedStatus('all')} /> : null}
+                  {selectedMediaFilter !== 'all' ? <FilterChip label={selectedMediaFilter} onRemove={() => setSelectedMediaFilter('all')} /> : null}
+                  <button type="button" onClick={handleClearFilters} className="text-xs font-semibold text-slate-500 underline transition hover:text-slate-700">
+                    Limpiar todo
+                  </button>
+                </div>
+              )}
+
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-slate-500">
+                  Mostrando{' '}
+                  <span className="font-semibold text-slate-700">{filteredGroupCount}</span> grupos ·{' '}
+                  <span className="font-semibold text-slate-700">{totalCatalogCount}</span> productos
+                </p>
+                <div className="flex items-center gap-2">
+                  {savedViews.length > 0 && (
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setIsSavedViewsOpen(prev => !prev)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                      >
+                        Vistas ({savedViews.length})
+                      </button>
+                      {isSavedViewsOpen && (
+                        <div className="absolute right-0 top-full z-30 mt-1 min-w-[180px] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                          {(savedViews as any[]).map(view => (
+                            <button
+                              key={view.name}
+                              type="button"
+                              onClick={() => { applySavedView(view.name); setIsSavedViewsOpen(false); }}
+                              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                            >
+                              {view.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsSettingsOpen(true)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/60 px-3 py-1.5 text-xs font-semibold text-[color:var(--catalog-accent)] transition hover:bg-[color:var(--catalog-accent-soft)]"
+                    >
+                      Guardar vista
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {displayProducts.length === 0 ? (
                 <div className="rounded-[28px] border border-slate-200 bg-white px-8 py-16 text-center shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
                   <div className="mx-auto mb-5 inline-flex h-20 w-20 items-center justify-center rounded-full bg-slate-100">
@@ -313,6 +513,7 @@ function CatalogPage() {
                       <ProductCard
                         key={product.id}
                         product={product}
+                        tenantId={selectedTenantId}
                         categoryLabelMap={categoryLabelMap}
                         onViewDetails={handleOpenProduct}
                       />
@@ -321,10 +522,14 @@ function CatalogPage() {
 
                   {totalPages > 1 && (
                     <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+                      <p className="w-full text-center text-sm text-slate-500">
+                        Página {currentPage} de {totalPages}
+                      </p>
                       <button
                         onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
                         disabled={currentPage === 1}
                         className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Página anterior"
                       >
                         <ChevronLeft className="h-4 w-4" />
                         Anterior
@@ -340,6 +545,8 @@ function CatalogPage() {
                             <button
                               key={page}
                               onClick={() => setCurrentPage(page)}
+                              aria-label={currentPage === page ? 'Página actual' : `Ir a la página ${page}`}
+                              aria-current={currentPage === page ? 'page' : undefined}
                               className={`rounded-xl px-4 py-2.5 text-sm font-medium transition ${
                               currentPage === page
                                   ? 'bg-[var(--catalog-accent)] text-white shadow-[0_8px_18px_rgba(20,61,107,0.22)]'
@@ -356,6 +563,7 @@ function CatalogPage() {
                         onClick={() => setCurrentPage(page => Math.min(totalPages, page + 1))}
                         disabled={currentPage === totalPages}
                         className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Página siguiente"
                       >
                         Siguiente
                         <ChevronRight className="h-4 w-4" />
@@ -370,9 +578,12 @@ function CatalogPage() {
       </main>
 
       {selectedProduct && (
+        <ErrorBoundary>
+        <Suspense fallback={<LoadingSpinner />}>
         <ProductModal
           product={selectedProduct}
           categoryLabelMap={categoryLabelMap}
+          catalogProducts={products}
           onClose={handleCloseProduct}
           onPrev={selectedProductIndex > 0 ? handlePrevProduct : undefined}
           onNext={selectedProductIndex >= 0 && selectedProductIndex < displayProducts.length - 1 ? handleNextProduct : undefined}
@@ -385,6 +596,8 @@ function CatalogPage() {
               : null
           }
           currentUserRole={currentUserRole}
+          tenantId={selectedTenantId}
+          onDirtyChange={setIsProductDirty}
           onAddVariant={() => {
             if (!selectedProduct) return;
             const parent = selectedProduct?.variantParentId
@@ -405,13 +618,17 @@ function CatalogPage() {
             }
 
             if (segment === 'product' && value) {
-              const target = products.find(product => product.id === value) || selectedProduct?.variants?.find((variant: any) => variant.id === value);
+              const target =
+                products.find(product => product.id === value) ||
+                selectedProduct?.variants?.find((variant: any) => variant.id === value);
               if (target) {
-                handleOpenProduct(target);
+                handleOpenProduct(target as Product);
               }
             }
           }}
         />
+        </Suspense>
+        </ErrorBoundary>
       )}
 
       <CatalogSettingsModal
@@ -484,14 +701,24 @@ function RequireRole({
 function App() {
   return (
     <BrowserRouter>
+      <ToastProvider>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={
+            <Suspense fallback={<LoadingSpinner />}>
+              <LoginPage />
+            </Suspense>
+          }
+        />
         <Route
           path="/superadmin"
           element={
-            <RequireRole role="superadmin">
-              <SuperadminPage />
-            </RequireRole>
+            <Suspense fallback={<LoadingSpinner />}>
+              <RequireRole role="superadmin">
+                <SuperadminPage />
+              </RequireRole>
+            </Suspense>
           }
         />
         <Route
@@ -503,6 +730,7 @@ function App() {
           }
         />
       </Routes>
+      </ToastProvider>
     </BrowserRouter>
   );
 }

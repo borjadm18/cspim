@@ -6,6 +6,8 @@ import { cleanText } from '../selectors/catalogSelectors';
 
 interface FiltersSidebarProps {
   products: Product[];
+  summaryProductsCount?: number;
+  summaryWithImagesCount?: number;
   brandOptions: BrandOption[];
   selectedBrand: string;
   onBrandChange: (brand: string) => void;
@@ -25,6 +27,8 @@ interface FiltersSidebarProps {
   onNameChange: (value: string) => void;
   selectedNumber: string;
   onNumberChange: (value: string) => void;
+  selectedAttributeQuery: string;
+  onAttributeQueryChange: (value: string) => void;
   onClearFilters: () => void;
 }
 
@@ -93,7 +97,9 @@ const FilterTile = ({
     }`}
   >
     <span className="text-sm font-medium">{label}</span>
-    <span className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${active ? 'text-[color:var(--catalog-accent)]/80' : 'text-slate-500'}`}>
+    <span
+      className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${active ? 'text-[color:var(--catalog-accent)]/80' : 'text-slate-500'}`}
+    >
       {count}
     </span>
   </button>
@@ -101,6 +107,8 @@ const FilterTile = ({
 
 export function FiltersSidebar({
   products = [],
+  summaryProductsCount,
+  summaryWithImagesCount,
   brandOptions = [],
   selectedBrand,
   onBrandChange,
@@ -120,6 +128,8 @@ export function FiltersSidebar({
   onNameChange,
   selectedNumber,
   onNumberChange,
+  selectedAttributeQuery,
+  onAttributeQueryChange,
   onClearFilters,
 }: FiltersSidebarProps) {
   const hasBrands = brandOptions.length > 0;
@@ -128,7 +138,7 @@ export function FiltersSidebar({
 
   const categories = useMemo(() => flattenTree(categoryTree), [categoryTree]);
   const categoryMap = useMemo(() => Object.fromEntries(categories.map(item => [item.id, item.path])), [categories]);
-  const selectedCategoryLabel = selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] ?? selectedCategory);
+  const selectedCategoryLabel = selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] || selectedCategory);
 
   const visibleCategories = useMemo(() => {
     const term = categoryQuery.trim().toLowerCase();
@@ -150,18 +160,12 @@ export function FiltersSidebar({
     [categories]
   );
 
-  const typeLookup = useMemo(
-    () => Object.fromEntries(typeOptions.map(option => [option.id, option])),
-    [typeOptions]
-  );
-
-  const statusLookup = useMemo(
-    () => Object.fromEntries(statusOptions.map(option => [option.id, option])),
-    [statusOptions]
-  );
+  const typeLookup = useMemo(() => Object.fromEntries(typeOptions.map(option => [option.id, option])), [typeOptions]);
+  const statusLookup = useMemo(() => Object.fromEntries(statusOptions.map(option => [option.id, option])), [statusOptions]);
   const activeFilterCount = [
     selectedName.trim(),
     selectedNumber.trim(),
+    selectedAttributeQuery.trim(),
     selectedBrand !== 'all',
     selectedCategory !== 'all',
     selectedType !== 'all',
@@ -221,6 +225,151 @@ export function FiltersSidebar({
               className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
             />
           </div>
+
+          <div className="space-y-2">
+            <label htmlFor="attribute-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Atributo
+            </label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                id="attribute-filter"
+                type="text"
+                value={selectedAttributeQuery}
+                onChange={event => onAttributeQueryChange(event.target.value)}
+                placeholder="Filtrar por atributo o valor..."
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              />
+              {selectedAttributeQuery ? (
+                <button
+                  type="button"
+                  onClick={() => onAttributeQueryChange('')}
+                  className="absolute right-3 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                  aria-label="Limpiar búsqueda de atributos"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Categorías</p>
+              <p className="mt-1 text-xs text-slate-500">Busca por nombre o ruta.</p>
+            </div>
+            {selectedCategoryLabel ? (
+              <button
+                type="button"
+                onClick={() => onCategoryChange('all')}
+                className="max-w-[11rem] truncate rounded-full bg-[color:var(--catalog-accent-soft)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--catalog-accent)]"
+                title={selectedCategoryLabel}
+              >
+                {selectedCategoryLabel}
+              </button>
+            ) : null}
+          </div>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={categoryQuery}
+              onChange={event => setCategoryQuery(event.target.value)}
+              placeholder="Buscar categoría..."
+              className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+            />
+            {categoryQuery ? (
+              <button
+                type="button"
+                onClick={() => setCategoryQuery('')}
+                className="absolute right-3 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Limpiar búsqueda de categorías"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
+
+          {!categoryQuery.trim() && !showAllCategories ? (
+            <div className="grid grid-cols-2 gap-2">
+              {featuredCategories.map(item => {
+                const active = selectedCategory === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    title={item.label}
+                    onClick={() => onCategoryChange(item.id)}
+                    className={`rounded-2xl border px-3 py-3 text-left transition ${
+                      active
+                        ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
+                        : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className={`min-w-0 break-words text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
+                        {item.label}
+                      </span>
+                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                        {item.count}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+
+          {showAllCategories || categoryQuery.trim() ? (
+            <div className="space-y-2">
+              {visibleCategories.length > 0 ? (
+                visibleCategories.map(item => {
+                  const active = selectedCategory === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onCategoryChange(item.id)}
+                      className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                        active
+                          ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
+                          : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className={`truncate text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
+                            {item.label}
+                          </p>
+                          <p className="mt-1 truncate text-xs text-slate-500">{item.path}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
+                          {item.count}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
+                  No hay categorías que coincidan con esa búsqueda.
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {!categoryQuery.trim() ? (
+            <button
+              type="button"
+              onClick={() => setShowAllCategories(previous => !previous)}
+              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
+            >
+              {showAllCategories ? 'Mostrar menos' : `Ver todas las categorías (${categories.length})`}
+            </button>
+          ) : null}
         </section>
 
         <section className="space-y-3">
@@ -296,7 +445,7 @@ export function FiltersSidebar({
           </summary>
 
           <div className="mt-4 space-y-5">
-              <div className="space-y-2">
+            <div className="space-y-2">
               <label htmlFor="brand-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
                 Marca
               </label>
@@ -315,123 +464,6 @@ export function FiltersSidebar({
                 ))}
               </select>
             </div>
-
-            <section className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Categorías</p>
-                  <p className="mt-1 text-xs text-slate-500">Busca por nombre o ruta.</p>
-                </div>
-                {selectedCategoryLabel && (
-                  <button
-                    type="button"
-                    onClick={() => onCategoryChange('all')}
-                    className="max-w-[11rem] truncate rounded-full bg-[color:var(--catalog-accent-soft)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--catalog-accent)]"
-                    title={selectedCategoryLabel}
-                  >
-                    {selectedCategoryLabel}
-                  </button>
-                )}
-              </div>
-
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  value={categoryQuery}
-                  onChange={event => setCategoryQuery(event.target.value)}
-                  placeholder="Buscar categoría..."
-                  className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-                />
-                {categoryQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setCategoryQuery('')}
-                    className="absolute right-3 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                    aria-label="Limpiar búsqueda de categorías"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-
-              {!categoryQuery.trim() && !showAllCategories ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {featuredCategories.map(item => {
-                    const active = selectedCategory === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => onCategoryChange(item.id)}
-                        className={`rounded-2xl border px-3 py-3 text-left transition ${
-                          active
-                            ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
-                            : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <span className={`min-w-0 truncate text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
-                            {item.label}
-                          </span>
-                          <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                            {item.count}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-
-              {showAllCategories || categoryQuery.trim() ? (
-                <div className="space-y-2">
-                  {visibleCategories.length > 0 ? (
-                    visibleCategories.map(item => {
-                      const active = selectedCategory === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => onCategoryChange(item.id)}
-                          className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                            active
-                              ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
-                              : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className={`truncate text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
-                                {item.label}
-                              </p>
-                              <p className="mt-1 truncate text-xs text-slate-500">{item.path}</p>
-                            </div>
-                            <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                              {item.count}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-                      No hay categorías que coincidan con esa búsqueda.
-                    </div>
-                  )}
-                </div>
-              ) : null}
-
-              {!categoryQuery.trim() && (
-                <button
-                  type="button"
-                  onClick={() => setShowAllCategories(previous => !previous)}
-                  className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
-                >
-                  {showAllCategories ? 'Mostrar menos' : `Ver todas las categorías (${categories.length})`}
-                </button>
-              )}
-            </section>
 
             <div className="space-y-2">
               <label htmlFor="media-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
@@ -457,9 +489,9 @@ export function FiltersSidebar({
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Resumen</p>
           <p className="mt-2 text-sm text-slate-700">
-            {products.length} productos cargados
+            {summaryProductsCount ?? products.length} productos cargados
             {' · '}
-            {products.filter(product => (product.images?.length || 0) > 0).length} con imágenes
+            {summaryWithImagesCount ?? products.filter(product => (product.images?.length || 0) > 0).length} con imágenes
           </p>
         </div>
       </div>

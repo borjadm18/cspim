@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
-import { Package } from 'lucide-react';
+import React, { useState } from 'react';
+import { Package, Paperclip } from 'lucide-react';
 import type { Product } from '../api/productService';
 import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel, getVariantSwatchColor } from '../selectors/catalogSelectors';
 
 interface ProductCardProps {
   product: Product;
+  tenantId: string;
   categoryLabelMap: Record<string, string>;
   onViewDetails: (product: Product) => void;
 }
@@ -25,20 +26,24 @@ const fallbackImage = () => {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 };
 
-export function ProductCard({ product, categoryLabelMap, onViewDetails }: ProductCardProps) {
-  const primaryImage = product.images?.find(image => image?.url)?.url;
+export const ProductCard = React.memo(function ProductCard({ product, tenantId, categoryLabelMap, onViewDetails }: ProductCardProps) {
+  const primaryImage =
+    product.images?.find(image => image?.url)?.url ||
+    (product.previewImageAssetId
+      ? `/api/asset?tenant=${encodeURIComponent(tenantId)}&assetId=${encodeURIComponent(product.previewImageAssetId)}`
+      : undefined);
   const hasPrimaryImage = Boolean(primaryImage);
-  const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'empty'>(hasPrimaryImage ? 'loading' : 'empty');
-  const variantCount = Array.isArray((product as any).variants) ? (product as any).variants.length : 0;
-  const variantSwatches = Array.isArray((product as any).variants) ? (product as any).variants : [];
+  // Derive initial state from props synchronously — avoids a double-render useEffect
+  const [imageStatus, setImageStatus] = useState<'loading' | 'ready' | 'empty'>(
+    () => hasPrimaryImage ? 'loading' : 'empty'
+  );
+  const variantCount = product.variants?.length ?? 0;
+  const variantSwatches = product.variants ?? [];
   const primaryCategory = getPrimaryCategoryLabel(product, categoryLabelMap);
   const brandOrFamily = cleanText(product.brand).trim() || primaryCategory;
   const visibleSwatches = variantSwatches.length > 6 ? variantSwatches.slice(0, 5) : variantSwatches.slice(0, 6);
   const overflowCount = variantSwatches.length > 6 ? variantSwatches.length - 5 : 0;
-
-  useEffect(() => {
-    setImageStatus(hasPrimaryImage ? 'loading' : 'empty');
-  }, [hasPrimaryImage, primaryImage]);
+  const hasDocuments = ((product as any).attachments?.length ?? 0) > 0;
 
   return (
     <article
@@ -54,6 +59,11 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
       }}
       >
       <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
+        {hasDocuments && (
+          <div className="absolute left-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white/90 shadow-sm" title="Tiene documentos adjuntos">
+            <Paperclip className="h-3 w-3 text-slate-500" />
+          </div>
+        )}
         <div className="flex aspect-[4/3] items-center justify-center p-4">
           {hasPrimaryImage ? (
             <>
@@ -92,13 +102,16 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
                 <span
                   key={variant.id || variant.sku || variant.number || index}
                   title={finishLabel}
-                  className="inline-flex h-[14px] w-[14px] rounded-full border border-white shadow-sm ring-1 ring-slate-200"
+                  className="inline-flex h-5 w-5 rounded-full border border-white shadow-sm ring-1 ring-slate-200"
                   style={{ backgroundColor: swatchColor }}
                 />
               );
             })}
             {overflowCount > 0 ? (
-              <span className="inline-flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-slate-100 px-1 text-[9px] font-semibold leading-none text-slate-600">
+              <span
+                className="inline-flex h-[14px] min-w-[14px] items-center justify-center rounded-full bg-slate-100 px-1 text-[9px] font-semibold leading-none text-slate-600"
+                title={variantSwatches.slice(5).map((v: any, i: number) => getVariantFinishLabel(v) || `Acabado ${i + 6}`).join(', ')}
+              >
                 +{overflowCount}
               </span>
             ) : null}
@@ -113,7 +126,7 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
             {product.name}
           </h3>
           <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-slate-500">
-            SKU {product.sku || (product as any).number || 'Sin SKU'}
+            SKU {product.sku || product.number || 'Sin SKU'}
           </p>
         </div>
 
@@ -143,4 +156,4 @@ export function ProductCard({ product, categoryLabelMap, onViewDetails }: Produc
       </div>
     </article>
   );
-}
+});
