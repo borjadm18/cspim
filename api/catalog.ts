@@ -554,15 +554,14 @@ const fetchProducts = async (tenant: TenantConfig) => {
     try {
       const supabase = getSupabaseAdmin();
       if (supabase) {
-        const { data: row } = await supabase
+        const { data: row } = await (supabase as any)
           .from('catalog_cache')
           .select('products, fetched_at')
           .eq('tenant_key', cacheKey)
-          .single();
-        if (row && Date.now() - new Date(row.fetched_at as string).getTime() < SUPABASE_CACHE_TTL_MS) {
-          const products = row.products as any[];
-          catalogCache.set(cacheKey, { data: products, fetchedAt: Date.now() });
-          return products;
+          .single() as { data: { products: any[]; fetched_at: string } | null };
+        if (row && Date.now() - new Date(row.fetched_at).getTime() < SUPABASE_CACHE_TTL_MS) {
+          catalogCache.set(cacheKey, { data: row.products, fetchedAt: Date.now() });
+          return row.products;
         }
       }
     } catch {
@@ -635,11 +634,10 @@ const fetchProducts = async (tenant: TenantConfig) => {
     // Write-back to Supabase L2 cache (fire-and-forget)
     const supabase = getSupabaseAdmin();
     if (supabase) {
-      supabase
+      void (supabase as any)
         .from('catalog_cache')
         .upsert({ tenant_key: cacheKey, products: normalizedProducts, fetched_at: new Date().toISOString() })
-        .then(() => {})
-        .catch(() => {});
+        .then(() => {}, () => {});
     }
 
     return normalizedProducts;
