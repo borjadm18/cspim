@@ -1,7 +1,7 @@
 ﻿/// <reference types="node" />
 import { createClient } from '@supabase/supabase-js';
-import { requireAuth } from './_lib/auth';
-import { checkRateLimit, getClientIp } from './_lib/rateLimit';
+import { requireAuth } from './_lib/auth.js';
+import { checkRateLimit, getClientIp } from './_lib/rateLimit.js';
 type TenantConfig = {
   clientId: string;
   clientSecret: string;

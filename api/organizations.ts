@@ -1,4 +1,6 @@
 ﻿/// <reference types="node" />
+import { requireAuth } from './_lib/auth.js';
+
 type PublicOrganization = {
   id: string;
   label: string;
@@ -115,6 +117,22 @@ const parsePublicOrganizations = (): PublicOrganization[] => {
 };
 
 export async function GET(request: Request) {
+  let authResponse: Response | null = null;
+  const fakeRes = {
+    status: (code: number) => ({
+      json: (body: unknown) => {
+        authResponse = new Response(JSON.stringify(body), {
+          status: code,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        });
+        return authResponse;
+      },
+    }),
+  };
+
+  const auth = await requireAuth(request, fakeRes);
+  if (!auth) return authResponse ?? new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+
   return sendJson(200, {
     organizations: parsePublicOrganizations(),
   }, getCorsHeaders(request));

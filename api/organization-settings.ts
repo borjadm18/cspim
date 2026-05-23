@@ -1,5 +1,6 @@
 ﻿import type { CatalogSettings } from '../src/features/catalog/model/catalogTypes.js';
 import { DEFAULT_CATALOG_THEME_ID } from '../src/shared/theme/catalogThemes.js';
+import { requireAuth } from './_lib/auth.js';
 
 type StoredSettings = {
   tenantId: string;
@@ -41,12 +42,18 @@ const DEFAULT_SETTINGS: CatalogSettings = {
 
 const settingsStore = new Map<string, CatalogSettings>();
 
+const isValidHttpsUrl = (v: string): boolean => {
+  try { return new URL(v).protocol === 'https:'; } catch { return false; }
+};
+
 const normalizeSettings = (value: unknown): CatalogSettings => {
   const candidate = value && typeof value === 'object' ? (value as Partial<CatalogSettings>) : {};
   return {
     pageSize: typeof candidate.pageSize === 'number' ? candidate.pageSize : DEFAULT_SETTINGS.pageSize,
     density: candidate.density === 'compact' ? 'compact' : 'comfortable',
-    logoUrl: typeof candidate.logoUrl === 'string' && candidate.logoUrl.trim() ? candidate.logoUrl.trim() : undefined,
+    logoUrl: typeof candidate.logoUrl === 'string' && isValidHttpsUrl(candidate.logoUrl.trim())
+      ? candidate.logoUrl.trim()
+      : undefined,
     paletteId: typeof candidate.paletteId === 'string' && candidate.paletteId.trim() ? candidate.paletteId.trim() : DEFAULT_SETTINGS.paletteId,
   };
 };
@@ -73,6 +80,23 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  // Build lightweight Express-compatible shims so requireAuth can work with the Web Request API
+  let authResponse: Response | null = null;
+  const fakeRes = {
+    status: (code: number) => ({
+      json: (body: unknown) => {
+        authResponse = new Response(JSON.stringify(body), {
+          status: code,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+        });
+        return authResponse;
+      },
+    }),
+  };
+
+  const auth = await requireAuth(request, fakeRes);
+  if (!auth) return authResponse ?? new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+
   try {
     const body = (await request.json()) as StoredSettings | Partial<StoredSettings>;
     const tenantId = typeof body.tenantId === 'string' && body.tenantId.trim() ? body.tenantId.trim() : 'default';
@@ -92,12 +116,10 @@ export async function PATCH(request: Request) {
         },
       }
     );
-  } catch (error) {
+  } catch (err: unknown) {
+    console.error('[organization-settings] Internal error:', err);
     return new Response(
-      JSON.stringify({
-        error: 'Failed to save organization settings',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      }),
+      JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
         headers: {
