@@ -1,7 +1,28 @@
-﻿/// <reference types="node" />
+/// <reference types="node" />
 import { createClient } from '@supabase/supabase-js';
+import type { CatalogPageMeta, CatalogQueryParams, CatalogSortKey } from '../src/features/catalog/model/catalogTypes';
+import {
+  buildBrandOptions,
+  buildCategoryLabelMap,
+  buildCategoryOptions,
+  buildCategoryTree,
+  buildStatusOptions,
+  buildTypeOptions,
+  cleanText,
+  filterProducts,
+  groupProductsForDisplay,
+  hasAssets,
+  hasDocuments,
+  hasImages,
+  hasMixedMedia,
+  isTestProduct,
+  normalizeKey,
+  resolveCategorySelectionIds,
+} from '../src/features/catalog/selectors/catalogSelectors.js';
+import type { Product } from '../src/features/catalog/api/productService';
 import { requireAuth } from './_lib/auth.js';
 import { checkRateLimit, getClientIp } from './_lib/rateLimit.js';
+
 type TenantConfig = {
   clientId: string;
   clientSecret: string;
@@ -14,8 +35,6 @@ type TenantConfigMap = Record<string, TenantConfig>;
 
 type BluestoneTokenResponse = {
   access_token: string;
-  expires_in?: number;
-  token_type?: string;
 };
 
 type AssetDownloadResponse = {
@@ -34,6 +53,17 @@ type DefinitionRecord = {
   dataType?: string;
 };
 
+type CatalogBaseMeta = Omit<
+  CatalogPageMeta,
+  'currentPage' | 'pageSize' | 'totalPages' | 'filteredGroupCount' | 'cacheAgeMs' | 'stale'
+>;
+
+type CatalogCacheEntry = {
+  data: Product[];
+  meta: CatalogBaseMeta;
+  fetchedAt: number;
+};
+
 const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
@@ -41,18 +71,19 @@ const corsHeaders = {
 
 const getCorsHeaders = (request: Request | { headers?: Record<string, string | string[] | undefined>; url?: string }) => {
   const headerSource =
-    request && typeof request === 'object' && 'headers' in request ? (request as any).headers : undefined;
+    request && typeof request === 'object' && 'headers' in request ? (request as { headers?: Record<string, string | string[] | undefined> }).headers : undefined;
   const origin =
-    typeof headerSource?.get === 'function'
-      ? headerSource.get('origin')
+    typeof (headerSource as { get?: (name: string) => string | null } | undefined)?.get === 'function'
+      ? (headerSource as { get: (name: string) => string | null }).get('origin')
       : Array.isArray(headerSource?.origin)
         ? headerSource.origin[0]
         : headerSource?.origin;
+
   if (!origin) return corsHeaders;
 
   const requestUrl =
-    typeof (request as any)?.url === 'string'
-      ? (request as any).url
+    typeof request?.url === 'string'
+      ? request.url
       : `https://${Array.isArray(headerSource?.host) ? headerSource.host[0] : headerSource?.host || 'content-store-omega.vercel.app'}`;
   const requestOrigin = new URL(requestUrl).origin;
   const allowList = (process.env.CATALOG_ALLOWED_ORIGINS || '')
@@ -72,99 +103,123 @@ const getCorsHeaders = (request: Request | { headers?: Record<string, string | s
 };
 
 const DEFAULT_TENANT = 'default';
-const definitionCache = new Map<string, Promise<Map<string, DefinitionRecord>>>();
-type CatalogCacheEntry = {
-  data: any[];
-  fetchedAt: number;
-};
-const catalogCache = new Map<string, CatalogCacheEntry>();
-const fetchInFlight = new Map<string, Promise<any[]>>();
-const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 120;
+const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
 const SUPABASE_CACHE_TTL_MS = 30 * 60 * 1000;
+const REFRESH_GRACE_MS = 2 * 60 * 60 * 1000;
+const BLUESTONE_TIMEOUT_MS = 20_000;
+const BLUESTONE_ATTEMPTS = 4;
+const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
 
-let supabaseAdminClient: ReturnType<typeof createClient> | null | undefined = undefined;
+const definitionCache = new Map<string, Promise<Map<string, DefinitionRecord>>>();
+const catalogCache = new Map<string, CatalogCacheEntry>();
+const refreshInFlight = new Map<string, Promise<CatalogCacheEntry>>();
+
+let supabaseAdminClient: ReturnType<typeof createClient> | null | undefined;
 
 const getSupabaseAdmin = () => {
   if (supabaseAdminClient !== undefined) return supabaseAdminClient;
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) { supabaseAdminClient = null; return null; }
+  if (!url || !key) {
+    supabaseAdminClient = null;
+    return null;
+  }
   supabaseAdminClient = createClient(url, key, { auth: { persistSession: false } });
   return supabaseAdminClient;
 };
-const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
 
-const cleanText = (value: unknown) => {
-  if (value === null || value === undefined) return '';
-  const text = String(value);
-  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-  try {
-    const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
-    return new TextDecoder('utf-8').decode(bytes) || text;
-  } catch {
-    return text;
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const compareStrings = (a: unknown, b: unknown) =>
+  String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base', numeric: true });
+
+const getProductUpdatedAt = (product: Product) => {
+  const raw = product.updatedAt || product.lastUpdate || product.createDate || '';
+  const time = Date.parse(String(raw));
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const getProductVariantCount = (product: Product) =>
+  Array.isArray(product.variants) ? product.variants.length : 0;
+
+const getRelevanceScore = (product: Product) => {
+  let score = 0;
+  if ((product.images?.length || 0) > 0 || product.previewImageAssetId) score += 1000;
+  if (hasDocuments(product)) score += 120;
+  if (hasAssets(product)) score += 40;
+  if (getProductVariantCount(product) > 0) score += 20;
+  score += Math.min((product.images?.length || 0) * 10, 90);
+  score += getProductUpdatedAt(product) > 0 ? 5 : 0;
+  return score;
+};
+
+const sortCatalogProducts = (products: Product[], sortBy: CatalogSortKey) => {
+  const next = [...products];
+  switch (sortBy) {
+    case 'name_asc':
+      return next.sort((a, b) => compareStrings(a.name, b.name));
+    case 'name_desc':
+      return next.sort((a, b) => compareStrings(b.name, a.name));
+    case 'sku_asc':
+      return next.sort((a, b) => compareStrings(a.sku || a.number, b.sku || b.number));
+    case 'updated_desc':
+      return next.sort((a, b) => getProductUpdatedAt(b) - getProductUpdatedAt(a) || compareStrings(a.name, b.name));
+    case 'variants_desc':
+      return next.sort((a, b) => getProductVariantCount(b) - getProductVariantCount(a) || compareStrings(a.name, b.name));
+    case 'relevance':
+    default:
+      return next.sort((a, b) => getRelevanceScore(b) - getRelevanceScore(a) || compareStrings(a.name, b.name));
   }
 };
 
-const extractTextCandidates = (value: unknown, preferredLocales: string[] = ['es', 'en']): string => {
-  if (value === null || value === undefined) return '';
+const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = BLUESTONE_ATTEMPTS, timeoutMs = BLUESTONE_TIMEOUT_MS) => {
+  let lastError: unknown = null;
 
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return cleanText(value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(item => extractTextCandidates(item, preferredLocales)).filter(Boolean).join(', ');
-  }
-
-  if (typeof value === 'object') {
-    const record = value as Record<string, any>;
-    const candidateKeys = ['displayValue', 'value', 'values', 'text', 'label', 'name', 'description'];
-
-    for (const key of candidateKeys) {
-      if (record[key] !== undefined && record[key] !== null) {
-        const resolved = extractTextCandidates(record[key], preferredLocales);
-        if (resolved) return resolved;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const controller = new AbortController();
+      timeout = setTimeout(
+        () => controller.abort(new Error(`Bluestone request timeout after ${timeoutMs}ms`)),
+        timeoutMs
+      );
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+      if (response.ok || (response.status !== 429 && response.status < 500)) {
+        return response;
       }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
-    for (const locale of preferredLocales) {
-      if (record[locale] !== undefined && record[locale] !== null) {
-        const resolved = extractTextCandidates(record[locale], preferredLocales);
-        if (resolved) return resolved;
-      }
+    if (attempt < attempts) {
+      await sleep(500 * attempt);
     }
-
-    const flattened = Object.values(record)
-      .map(item => extractTextCandidates(item, preferredLocales))
-      .filter(text => text && text !== '[object Object]');
-    if (flattened.length) return flattened.join(', ');
   }
 
-  return '';
+  throw lastError instanceof Error ? lastError : new Error('Request failed after retries');
 };
 
-const extractLocalizedValue = (value: unknown, preferredLocales: string[] = ['es', 'en']): string =>
-  extractTextCandidates(value, preferredLocales);
-
-const formatAttributeValue = (value: unknown): string => {
-  const resolved = extractTextCandidates(value);
-  if (resolved) return resolved;
-  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
-  if (typeof value === 'number') return String(value);
-  return '';
-};
-
-const normalizeDefinition = (definition: any): DefinitionRecord | null => {
-  if (!definition?.id) return null;
+const normalizeDefinition = (definition: unknown): DefinitionRecord | null => {
+  if (!definition || typeof definition !== 'object') return null;
+  const record = definition as Record<string, unknown>;
+  if (!record.id) return null;
 
   return {
-    id: String(definition.id),
-    number: definition.number ? String(definition.number) : undefined,
-    name: cleanText(definition.name || definition.label || definition.id),
-    group: definition.group ? cleanText(definition.group) : null,
-    dataType: definition.dataType ? cleanText(definition.dataType) : undefined,
+    id: String(record.id),
+    number: record.number ? String(record.number) : undefined,
+    name: cleanText(record.name || record.label || record.id),
+    group: record.group ? cleanText(record.group) : null,
+    dataType: record.dataType ? cleanText(record.dataType) : undefined,
   };
 };
 
@@ -176,9 +231,7 @@ const TENANT_MAP: TenantConfigMap = (() => {
     const orgId = process.env.BLUESTONE_ORG_ID;
     const env = (process.env.BLUESTONE_ENV || 'test') as TenantConfig['env'];
 
-    if (!clientId || !clientSecret || !orgId) {
-      return {};
-    }
+    if (!clientId || !clientSecret || !orgId) return {};
 
     return {
       [DEFAULT_TENANT]: {
@@ -204,41 +257,120 @@ const TENANT_MAP: TenantConfigMap = (() => {
 const getTenantConfig = (tenantId: string): TenantConfig | null =>
   TENANT_MAP[tenantId] || TENANT_MAP[DEFAULT_TENANT] || null;
 
-const getBaseUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com');
-const getTokenUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://idp.test.bluestonepim.com/op/token' : 'https://idp.bluestonepim.com/op/token');
+const getBaseUrl = (env: TenantConfig['env']) =>
+  env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com';
 
-const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const getTokenUrl = (env: TenantConfig['env']) =>
+  env === 'test' ? 'https://idp.test.bluestonepim.com/op/token' : 'https://idp.bluestonepim.com/op/token';
 
-const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = 4, timeoutMs = 15000) => {
-  let lastError: unknown = null;
+const extractTextCandidates = (value: unknown, preferredLocales: string[] = ['es', 'en']): string => {
+  if (value === null || value === undefined) return '';
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    try {
-      const controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), timeoutMs);
-      const response = await fetch(input, {
-        ...init,
-        signal: controller.signal,
-      });
-      if (response.ok || (response.status !== 429 && response.status < 500)) {
-        return response;
-      }
-
-      lastError = new Error(`HTTP ${response.status}`);
-    } catch (error) {
-      lastError = error;
-    }
-    finally {
-      if (timeout) clearTimeout(timeout);
-    }
-
-    if (attempt < attempts) {
-      await sleep(400 * attempt);
-    }
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return cleanText(value);
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Request failed after retries');
+  if (Array.isArray(value)) {
+    return value.map(item => extractTextCandidates(item, preferredLocales)).filter(Boolean).join(', ');
+  }
+
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const candidateKeys = ['displayValue', 'value', 'values', 'text', 'label', 'name', 'description'];
+
+    for (const key of candidateKeys) {
+      if (record[key] !== undefined && record[key] !== null) {
+        const resolved = extractTextCandidates(record[key], preferredLocales);
+        if (resolved) return resolved;
+      }
+    }
+
+    for (const locale of preferredLocales) {
+      if (record[locale] !== undefined && record[locale] !== null) {
+        const resolved = extractTextCandidates(record[locale], preferredLocales);
+        if (resolved) return resolved;
+      }
+    }
+
+    const flattened = Object.values(record)
+      .map(item => extractTextCandidates(item, preferredLocales))
+      .filter(text => text && text !== '[object Object]');
+
+    if (flattened.length) return flattened.join(', ');
+  }
+
+  return '';
+};
+
+const extractLocalizedValue = (value: unknown, preferredLocales: string[] = ['es', 'en']) =>
+  extractTextCandidates(value, preferredLocales);
+
+const formatAttributeValue = (value: unknown): string => {
+  const resolved = extractTextCandidates(value);
+  if (resolved) return resolved;
+  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
+  if (typeof value === 'number') return String(value);
+  return '';
+};
+
+const normalizeProductBatch = (data: unknown) => {
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === 'object') {
+    const record = data as Record<string, unknown>;
+    if (Array.isArray(record.data)) return record.data;
+    if (Array.isArray(record.results)) return record.results;
+    if (Array.isArray(record.items)) return record.items;
+  }
+  return [];
+};
+
+const chunk = <T,>(items: T[], size: number) => {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+};
+
+const mapWithConcurrency = async <T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+) => {
+  const results: R[] = [];
+  const queue = [...items].map((item, index) => ({ item, index }));
+  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
+    while (queue.length) {
+      const next = queue.shift();
+      if (!next) break;
+      results[next.index] = await mapper(next.item, next.index);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+};
+
+const extractPreviewAssetIds = (product: unknown, maxAssets = CATALOG_PREVIEW_ASSETS_PER_PRODUCT) => {
+  if (!product || typeof product !== 'object') return [];
+  const assets = (product as { assets?: unknown[] }).assets;
+  if (!Array.isArray(assets)) return [];
+  return assets
+    .map(asset => String(asset).trim())
+    .filter(Boolean)
+    .slice(0, maxAssets);
+};
+
+const isImageFileName = (fileName: string) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
+
+const scoreImageByFileName = (image: { alt?: string; url?: string; isPrimary?: boolean }) => {
+  const descriptor = (image.alt || image.url || '').toLowerCase();
+  let score = 0;
+  const positive = ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render'];
+  const negative = ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimension'];
+  for (const keyword of positive) if (descriptor.includes(keyword)) score += 80;
+  for (const keyword of negative) if (descriptor.includes(keyword)) score -= 260;
+  return score;
 };
 
 const fetchDefinitions = async (tenant: TenantConfig, token: string) => {
@@ -305,8 +437,7 @@ const getAccessToken = async (tenant: TenantConfig): Promise<string> => {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Token request failed (${response.status}): ${errorText}`);
+    throw new Error(`Token request failed (${response.status}): ${await response.text()}`);
   }
 
   const data = (await response.json()) as BluestoneTokenResponse;
@@ -315,61 +446,6 @@ const getAccessToken = async (tenant: TenantConfig): Promise<string> => {
   }
 
   return data.access_token;
-};
-
-const normalizeProductBatch = (data: any) => {
-  if (Array.isArray(data)) return data;
-  if (Array.isArray(data?.data)) return data.data;
-  if (Array.isArray(data?.results)) return data.results;
-  if (Array.isArray(data?.items)) return data.items;
-  return [];
-};
-
-const chunk = <T,>(items: T[], size: number) => {
-  const result: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size));
-  }
-  return result;
-};
-
-const extractPreviewAssetIds = (product: any, maxAssets = CATALOG_PREVIEW_ASSETS_PER_PRODUCT) => {
-  if (!Array.isArray(product?.assets)) return [];
-  return product.assets
-    .map((asset: unknown) => String(asset).trim())
-    .filter(Boolean)
-    .slice(0, maxAssets);
-};
-
-const mapWithConcurrency = async <T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>
-) => {
-  const results: R[] = [];
-  const queue = [...items].map((item, index) => ({ item, index }));
-  const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
-    while (queue.length) {
-      const next = queue.shift();
-      if (!next) break;
-      results[next.index] = await mapper(next.item, next.index);
-    }
-  });
-
-  await Promise.all(workers);
-  return results;
-};
-
-const isImageFileName = (fileName: string) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
-
-const scoreImageByFileName = (image: { alt?: string; url?: string; isPrimary?: boolean }) => {
-  const descriptor = (image.alt || image.url || '').toLowerCase();
-  let score = 0;
-  const positive = ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render'];
-  const negative = ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimension'];
-  for (const kw of positive) if (descriptor.includes(kw)) score += 80;
-  for (const kw of negative) if (descriptor.includes(kw)) score -= 260;
-  return score;
 };
 
 const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds: string[]) => {
@@ -395,8 +471,7 @@ const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Bluestone assets request failed (${response.status}): ${errorText}`);
+      throw new Error(`Bluestone assets request failed (${response.status}): ${await response.text()}`);
     }
 
     const payload = (await response.json()) as AssetDownloadResponse;
@@ -413,11 +488,25 @@ const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds
   return downloads;
 };
 
-const buildProductMedia = (assetIds: string[], assetMap: Map<string, { assetId: string; presignedUrl: string; fileName: string }>) => {
+// TRES Grifería standard image slots — only these two are shown, in this order.
+// If a product has at least one asset matching these suffixes, the TRES filter
+// activates: only IMG_L and PLUMI_L are exposed (deduplicated), all others hidden.
+// Products without these suffixes fall through to the legacy heuristic sort.
+const getTresSlot = (fileName: string): 0 | 1 | null => {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('_img_l.jpg')) return 0;   // first / primary
+  if (lower.endsWith('_plumi_l.jpg')) return 1;  // last
+  return null;
+};
+
+const buildProductMedia = (
+  assetIds: string[],
+  assetMap: Map<string, { assetId: string; presignedUrl: string; fileName: string }>
+) => {
   const images: Array<{ id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean }> = [];
   const attachments: Array<{ id: string; name: string; url: string; downloadUrl: string; type: string }> = [];
 
-  for (const [index, assetId] of assetIds.entries()) {
+  for (const assetId of assetIds) {
     const asset = assetMap.get(assetId);
     if (!asset) continue;
 
@@ -430,11 +519,7 @@ const buildProductMedia = (assetIds: string[], assetMap: Map<string, { assetId: 
     };
 
     if (isImageFileName(fileName)) {
-      images.push({
-        ...entry,
-        alt: fileName,
-        isPrimary: index === 0,
-      });
+      images.push({ ...entry, alt: fileName, isPrimary: false });
       continue;
     }
 
@@ -445,40 +530,59 @@ const buildProductMedia = (assetIds: string[], assetMap: Map<string, { assetId: 
     });
   }
 
+  // TRES filter: if any image matches _IMG_L / _PLUMI_L naming, apply strict filter
+  const hasTresImages = images.some(img => getTresSlot(img.alt) !== null);
+  if (hasTresImages) {
+    // Keep only the first occurrence of each slot (deduplicates repeated PLUMIL/IMG_L)
+    const slotMap = new Map<number, typeof images[0]>();
+    for (const img of images) {
+      const slot = getTresSlot(img.alt);
+      if (slot === null) continue;
+      if (!slotMap.has(slot)) slotMap.set(slot, img);
+    }
+    const filtered = ([slotMap.get(0), slotMap.get(1)] as Array<typeof images[0] | undefined>)
+      .filter((img): img is typeof images[0] => img !== undefined);
+    if (filtered.length > 0) filtered[0]!.isPrimary = true;
+    return { images: filtered, attachments };
+  }
+
+  // Legacy: heuristic sort for non-TRES products
   images.sort((a, b) => scoreImageByFileName(b) - scoreImageByFileName(a));
+  if (images.length > 0) images[0]!.isPrimary = true;
   return { images, attachments };
 };
 
-const enrichAttributes = (attributes: any[], definitionMap: Map<string, DefinitionRecord>) =>
+const enrichAttributes = (attributes: unknown[], definitionMap: Map<string, DefinitionRecord>) =>
   attributes.map(attribute => {
-    const definitionId = String(attribute?.definitionId || '');
+    const source = typeof attribute === 'object' && attribute !== null ? (attribute as Record<string, unknown>) : {};
+    const definitionId = String(source.definitionId || '');
     const definition = definitionMap.get(definitionId);
-    const rawValue = attribute?.value ?? attribute?.values;
+    const rawValue = source.value ?? source.values;
     const displayValue = formatAttributeValue(rawValue);
 
     return {
       definitionId,
-      definitionName: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
-      name: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
-      group: cleanText(definition?.group || attribute?.groupName || attribute?.group || ''),
-      dataType: cleanText(definition?.dataType || attribute?.dataType || ''),
+      definitionName: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
+      name: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
+      group: cleanText(definition?.group || source.groupName || source.group || ''),
+      dataType: cleanText(definition?.dataType || source.dataType || ''),
       value: displayValue,
       displayValue,
       rawValue,
-      readOnly: Boolean(attribute?.readOnly),
+      readOnly: Boolean(source.readOnly),
     };
   });
 
-const buildAttributeSearchText = (attributes: any[]) =>
+const buildAttributeSearchText = (attributes: Array<Record<string, unknown>>) =>
   attributes
     .map(attribute =>
       [
-        attribute?.definitionName,
-        attribute?.name,
-        attribute?.group,
-        attribute?.dataType,
-        attribute?.displayValue,
-        attribute?.value,
+        attribute.definitionName,
+        attribute.name,
+        attribute.group,
+        attribute.dataType,
+        attribute.displayValue,
+        attribute.value,
       ]
         .map(value => cleanText(value).trim())
         .filter(Boolean)
@@ -488,32 +592,33 @@ const buildAttributeSearchText = (attributes: any[]) =>
     .join(' ');
 
 const normalizeCatalogProduct = (
-  product: any,
-  media: { images: Array<{ id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean }>; attachments: Array<{ id: string; name: string; url: string; downloadUrl: string; type: string }> },
-  attributes: any[],
+  product: Record<string, unknown>,
+  media: {
+    images: Array<{ id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean }>;
+    attachments: Array<{ id: string; name: string; url: string; downloadUrl: string; type: string }>;
+  },
+  attributes: Array<Record<string, unknown>>,
   options?: { assetIds?: string[]; includeAttributes?: boolean; includeMediaUrls?: boolean }
-) => {
-  const metadata = product?.metadata || {};
-  const metadataName = extractLocalizedValue(metadata?.name);
-  const metadataDescription = extractLocalizedValue(metadata?.description);
-  const metadataNumber = extractLocalizedValue(metadata?.number);
-  const metadataType = extractLocalizedValue(metadata?.type);
-  const metadataBrand = extractLocalizedValue(
-    metadata?.brand || metadata?.manufacturer || metadata?.vendor || metadata?.publisher
-  );
+): Product => {
+  const metadata = typeof product.metadata === 'object' && product.metadata !== null ? (product.metadata as Record<string, unknown>) : {};
+  const metadataName = extractLocalizedValue(metadata.name);
+  const metadataDescription = extractLocalizedValue(metadata.description);
+  const metadataNumber = extractLocalizedValue(metadata.number);
+  const metadataType = extractLocalizedValue(metadata.type);
+  const metadataBrand = extractLocalizedValue(metadata.brand || metadata.manufacturer || metadata.vendor || metadata.publisher);
   const assetIds = options?.assetIds ?? extractPreviewAssetIds(product);
   const includeAttributes = options?.includeAttributes ?? true;
   const includeMediaUrls = options?.includeMediaUrls ?? true;
   const previewImage = media.images[0];
-  const previewImageAssetId = previewImage?.id ?? options?.assetIds?.[0];
+  const previewImageAssetId = previewImage?.id ?? assetIds[0];
 
   return {
-    id: String(product?.id || product?._id || metadata?.id || metadata?.number || ''),
-    name: cleanText(metadataName || product?.name || product?.title || product?.description || 'Producto'),
-    description: cleanText(metadataDescription || extractLocalizedValue(product?.description) || ''),
-    sku: cleanText(metadataNumber || product?.number || product?.sku || ''),
-    number: cleanText(metadataNumber || product?.number || ''),
-    variantParentId: cleanText(metadata?.variantParentId || product?.variantParentId || ''),
+    id: String(product.id || product._id || metadata.id || metadata.number || ''),
+    name: cleanText(metadataName || product.name || product.title || product.description || 'Producto'),
+    description: cleanText(metadataDescription || extractLocalizedValue(product.description) || ''),
+    sku: cleanText(metadataNumber || product.number || product.sku || ''),
+    number: cleanText(metadataNumber || product.number || ''),
+    variantParentId: cleanText(metadata.variantParentId || product.variantParentId || ''),
     images: includeMediaUrls ? media.images : [],
     attachments: includeMediaUrls ? media.attachments : [],
     previewImageAssetId,
@@ -521,141 +626,251 @@ const normalizeCatalogProduct = (
     assets: assetIds,
     attributes: includeAttributes ? attributes : [],
     attributeText: buildAttributeSearchText(attributes),
-    categories: Array.isArray(product?.categories)
-      ? product.categories.map((category: unknown) => String(category)).filter(Boolean)
-      : [],
-    category: cleanText(metadataType || product?.type || 'Sin categoría'),
-    brand: cleanText(metadataBrand || product?.brand || product?.manufacturer || product?.vendor || ''),
-    stock: typeof product?.stock === 'number' ? product.stock : undefined,
-    type: cleanText(metadataType || product?.type || ''),
-    state: metadata?.state || product?.state,
-    publicationState: metadata?.publicationState || product?.publicationState,
-    lastUpdate: metadata?.lastUpdate || product?.lastUpdate,
-    updatedAt: metadata?.updatedAt || product?.updatedAt,
-    createDate: metadata?.createDate || product?.createDate,
-    updatedBy: metadata?.updatedBy || product?.updatedBy,
-    lastUpdatedBy: metadata?.lastUpdatedBy || product?.lastUpdatedBy,
-    variants: Array.isArray(product?.variants) ? product.variants : [],
-    relations: Array.isArray(product?.relations) ? product.relations : [],
+    categories: Array.isArray(product.categories) ? product.categories.map(category => String(category)).filter(Boolean) : [],
+    category: cleanText(metadataType || product.type || 'Sin categoría'),
+    brand: cleanText(metadataBrand || product.brand || product.manufacturer || product.vendor || ''),
+    stock: typeof product.stock === 'number' ? product.stock : undefined,
+    type: cleanText(metadataType || product.type || ''),
+    state: metadata.state || product.state,
+    publicationState: metadata.publicationState || product.publicationState,
+    lastUpdate: metadata.lastUpdate || product.lastUpdate,
+    updatedAt: metadata.updatedAt || product.updatedAt,
+    createDate: metadata.createDate || product.createDate,
+    updatedBy: metadata.updatedBy || product.updatedBy,
+    lastUpdatedBy: metadata.lastUpdatedBy || product.lastUpdatedBy,
+    variants: Array.isArray(product.variants) ? (product.variants as Record<string, unknown>[]) : [],
+    relations: Array.isArray(product.relations) ? (product.relations as Record<string, unknown>[]) : [],
   };
 };
 
-const fetchProducts = async (tenant: TenantConfig) => {
-  const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
+const buildCatalogBaseMeta = (products: Product[]): CatalogBaseMeta => {
+  const categoryLabelMap = buildCategoryLabelMap(products);
+  const categoryOptions = buildCategoryOptions(products, categoryLabelMap);
+  const categoryTree = buildCategoryTree(categoryOptions);
+  const visibleCatalogCount = products.filter(product => normalizeKey(product.type) !== 'variant').length;
 
-  // L1: in-memory cache (10 min — survives within a warm serverless instance)
-  const cached = catalogCache.get(cacheKey);
-  if (cached && Date.now() - cached.fetchedAt < CATALOG_CACHE_TTL_MS) {
-    return cached.data;
-  }
+  return {
+    totalCatalogCount: visibleCatalogCount,
+    totalRawProductCount: products.length,
+    categoryLabelMap,
+    brandOptions: buildBrandOptions(products),
+    categoryTree,
+    typeOptions: buildTypeOptions(products),
+    statusOptions: buildStatusOptions(products),
+    imageCount: products.reduce((sum, product) => sum + (product.assets?.length || 0), 0),
+    attachmentCount: products.reduce((sum, product) => sum + (product.attachments?.length || 0), 0),
+    assetCount: products.filter(product => hasAssets(product)).length,
+    withImagesCount: products.filter(product => hasImages(product)).length,
+    withDocumentsCount: products.filter(product => hasDocuments(product)).length,
+    mixedMediaCount: products.filter(product => hasMixedMedia(product)).length,
+  };
+};
 
-  // L2: Supabase persistent cache (30 min — survives cold starts)
-  if (!fetchInFlight.has(cacheKey)) {
-    try {
-      const supabase = getSupabaseAdmin();
-      if (supabase) {
-        const { data: row } = await (supabase as any)
-          .from('catalog_cache')
-          .select('products, fetched_at')
-          .eq('tenant_key', cacheKey)
-          .single() as { data: { products: any[]; fetched_at: string } | null };
-        if (row && Date.now() - new Date(row.fetched_at).getTime() < SUPABASE_CACHE_TTL_MS) {
-          catalogCache.set(cacheKey, { data: row.products, fetchedAt: Date.now() });
-          return row.products;
-        }
-      }
-    } catch {
-      // Supabase unavailable — fall through to Bluestone fetch
-    }
-  }
+const parseCatalogQuery = (query: Record<string, unknown>): CatalogQueryParams => ({
+  tenantId: typeof query.tenant === 'string' ? query.tenant : DEFAULT_TENANT,
+  page: clamp(Number.parseInt(String(query.page || '1'), 10) || 1, 1, Number.MAX_SAFE_INTEGER),
+  pageSize: clamp(Number.parseInt(String(query.pageSize || DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+  sortBy: (typeof query.sortBy === 'string' ? query.sortBy : 'relevance') as CatalogSortKey,
+  searchTerm: typeof query.searchTerm === 'string' ? query.searchTerm : '',
+  selectedName: typeof query.selectedName === 'string' ? query.selectedName : '',
+  selectedNumber: typeof query.selectedNumber === 'string' ? query.selectedNumber : '',
+  selectedAttributeQuery: typeof query.selectedAttributeQuery === 'string' ? query.selectedAttributeQuery : '',
+  selectedBrand: typeof query.selectedBrand === 'string' ? query.selectedBrand : 'all',
+  selectedCategory: typeof query.selectedCategory === 'string' ? query.selectedCategory : 'all',
+  selectedType: typeof query.selectedType === 'string' ? query.selectedType : 'all',
+  selectedStatus: typeof query.selectedStatus === 'string' ? query.selectedStatus : 'all',
+  selectedMediaFilter: typeof query.selectedMediaFilter === 'string' ? query.selectedMediaFilter : 'all',
+  selectedQuickFilter: typeof query.selectedQuickFilter === 'string' ? query.selectedQuickFilter : 'all',
+});
 
-  const inFlight = fetchInFlight.get(cacheKey);
-  if (inFlight) {
-    return inFlight;
-  }
+const buildCatalogPage = (entry: CatalogCacheEntry, query: CatalogQueryParams) => {
+  const selectedCategoryIds = resolveCategorySelectionIds(query.selectedCategory, entry.meta.categoryTree);
+  const filteredProducts = filterProducts(
+    entry.data,
+    query.searchTerm,
+    query.selectedName,
+    query.selectedNumber,
+    query.selectedAttributeQuery,
+    query.selectedBrand,
+    selectedCategoryIds,
+    query.selectedType,
+    query.selectedStatus,
+    query.selectedMediaFilter,
+    query.selectedQuickFilter
+  );
+  const groupedProducts = groupProductsForDisplay(filteredProducts);
+  const sortedProducts = sortCatalogProducts(groupedProducts, query.sortBy);
+  const totalPages = Math.max(1, Math.ceil(sortedProducts.length / query.pageSize));
+  const currentPage = clamp(query.page, 1, totalPages);
+  const startIndex = (currentPage - 1) * query.pageSize;
+  const pageProducts = sortedProducts.slice(startIndex, startIndex + query.pageSize);
+  const cacheAgeMs = Date.now() - entry.fetchedAt;
 
-  const fetchPromise = (async () => {
+  return {
+    products: pageProducts,
+    meta: {
+      ...entry.meta,
+      currentPage,
+      pageSize: query.pageSize,
+      totalPages,
+      filteredGroupCount: groupedProducts.length,
+      imageCount: filteredProducts.reduce((sum, product) => sum + (product.assets?.length || 0), 0),
+      attachmentCount: filteredProducts.reduce((sum, product) => sum + (product.attachments?.length || 0), 0),
+      assetCount: filteredProducts.filter(product => hasAssets(product)).length,
+      withImagesCount: filteredProducts.filter(product => hasImages(product)).length,
+      withDocumentsCount: filteredProducts.filter(product => hasDocuments(product)).length,
+      mixedMediaCount: filteredProducts.filter(product => hasMixedMedia(product)).length,
+      cacheAgeMs,
+      stale: cacheAgeMs > SUPABASE_CACHE_TTL_MS,
+    } satisfies CatalogPageMeta,
+  };
+};
+
+const readSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | null> => {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
   try {
+    const { data: row } = await (supabase as ReturnType<typeof createClient>)
+      .from('catalog_cache')
+      .select('products, meta, fetched_at')
+      .eq('tenant_key', cacheKey)
+      .maybeSingle();
+
+    if (!row?.products || !row.fetched_at) return null;
+
+    const products = Array.isArray(row.products) ? (row.products as Product[]) : [];
+    const meta =
+      row.meta && typeof row.meta === 'object'
+        ? (row.meta as CatalogBaseMeta)
+        : buildCatalogBaseMeta(products);
+
+    return {
+      data: products,
+      meta,
+      fetchedAt: new Date(String(row.fetched_at)).getTime(),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const persistSupabaseCache = async (cacheKey: string, entry: CatalogCacheEntry) => {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return;
+  try {
+    await (supabase as ReturnType<typeof createClient>)
+      .from('catalog_cache')
+      .upsert({
+        tenant_key: cacheKey,
+        products: entry.data,
+        meta: entry.meta,
+        fetched_at: new Date(entry.fetchedAt).toISOString(),
+      });
+  } catch {
+    // Keep runtime resilient until every environment has the latest migration.
+  }
+};
+
+const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
+  const existing = refreshInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const promise = (async () => {
     const token = await getAccessToken(tenant);
+    const definitionPromise = fetchDefinitions(tenant, token);
     const baseUrl = getBaseUrl(tenant.env);
-    const allProducts: any[] = [];
+    const allProducts: Record<string, unknown>[] = [];
     let cursor: string | null = null;
 
-  do {
-    const body = cursor
-      ? {
-          cursor,
-          count: 100,
-          views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }, { type: 'LABELS' }],
-        }
-      : {
-          count: 100,
-          views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }, { type: 'LABELS' }],
-        };
+    do {
+      const body = cursor
+        ? {
+            cursor,
+            count: 100,
+            views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }],
+          }
+        : {
+            count: 100,
+            views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }],
+          };
 
-    const response = await fetchWithRetry(`${baseUrl}/pim/products/cursor/views/all`, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-        'content-type': 'application/json',
-        authorization: `Bearer ${token}`,
-        'x-organization-id': tenant.orgId,
-        context: tenant.context || 'en',
-        'context-fallback': 'true',
-      },
-      body: JSON.stringify(body),
-    });
+      const response = await fetchWithRetry(`${baseUrl}/pim/products/cursor/views/all`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+          'x-organization-id': tenant.orgId,
+          context: tenant.context || 'en',
+          'context-fallback': 'true',
+        },
+        body: JSON.stringify(body),
+      });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Bluestone products request failed (${response.status}): ${errorText}`);
-    }
+      if (!response.ok) {
+        throw new Error(`Bluestone products request failed (${response.status}): ${await response.text()}`);
+      }
 
-    const payload = await response.json();
-    const batch = normalizeProductBatch(payload);
-    allProducts.push(...batch);
-    cursor = payload?.nextCursor || payload?.cursor || null;
-  } while (cursor);
+      const payload = await response.json();
+      const batch = normalizeProductBatch(payload) as Record<string, unknown>[];
+      allProducts.push(...batch);
+      cursor = payload?.nextCursor || payload?.cursor || null;
+    } while (cursor);
 
-  const normalizedProducts = allProducts.map(product => {
-    const previewAssetIds = extractPreviewAssetIds(product);
-    return normalizeCatalogProduct(product, { images: [], attachments: [] }, [], {
-      assetIds: previewAssetIds,
-      includeAttributes: false,
-      includeMediaUrls: false,
-    });
-  });
+    const definitionMap = await definitionPromise;
+    const normalizedProducts = allProducts
+      .map(product => {
+        const previewAssetIds = extractPreviewAssetIds(product);
+        const rawAttributes = Array.isArray(product.attributes) ? (product.attributes as unknown[]) : [];
+        const attributes = enrichAttributes(rawAttributes, definitionMap) as Array<Record<string, unknown>>;
 
-    catalogCache.set(cacheKey, {
+        return normalizeCatalogProduct(product, { images: [], attachments: [] }, attributes, {
+          assetIds: previewAssetIds,
+          includeAttributes: false,
+          includeMediaUrls: false,
+        });
+      })
+      .filter(product => !isTestProduct(product));
+
+    const entry: CatalogCacheEntry = {
       data: normalizedProducts,
+      meta: buildCatalogBaseMeta(normalizedProducts),
       fetchedAt: Date.now(),
-    });
+    };
 
-    // Write-back to Supabase L2 cache (fire-and-forget)
-    const supabase = getSupabaseAdmin();
-    if (supabase) {
-      void (supabase as any)
-        .from('catalog_cache')
-        .upsert({ tenant_key: cacheKey, products: normalizedProducts, fetched_at: new Date().toISOString() })
-        .then(() => {}, () => {});
-    }
-
-    return normalizedProducts;
-  } catch (error) {
-    if (cached) {
-      return cached.data;
-    }
-
-    throw error;
-  }
+    catalogCache.set(cacheKey, entry);
+    await persistSupabaseCache(cacheKey, entry);
+    return entry;
   })();
 
-  fetchInFlight.set(cacheKey, fetchPromise);
-  try {
-    return await fetchPromise;
-  } finally {
-    fetchInFlight.delete(cacheKey);
+  refreshInFlight.set(cacheKey, promise);
+  return promise.finally(() => {
+    refreshInFlight.delete(cacheKey);
+  });
+};
+
+const getCatalogIndex = async (tenant: TenantConfig) => {
+  const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
+  const memoryEntry = catalogCache.get(cacheKey);
+  if (memoryEntry && Date.now() - memoryEntry.fetchedAt < MEMORY_CACHE_TTL_MS) {
+    return memoryEntry;
   }
+
+  if (memoryEntry && Date.now() - memoryEntry.fetchedAt < REFRESH_GRACE_MS) {
+    void refreshCatalogIndex(tenant, cacheKey).catch(() => {});
+    return memoryEntry;
+  }
+
+  const supabaseEntry = await readSupabaseCache(cacheKey);
+  if (supabaseEntry) {
+    catalogCache.set(cacheKey, supabaseEntry);
+    if (Date.now() - supabaseEntry.fetchedAt > SUPABASE_CACHE_TTL_MS) {
+      void refreshCatalogIndex(tenant, cacheKey).catch(() => {});
+    }
+    return supabaseEntry;
+  }
+
+  return refreshCatalogIndex(tenant, cacheKey);
 };
 
 const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
@@ -672,20 +887,19 @@ const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Bluestone product request failed (${response.status}): ${errorText}`);
+    throw new Error(`Bluestone product request failed (${response.status}): ${await response.text()}`);
   }
 
-  const product = await response.json();
-  const assetIds = Array.isArray(product?.assets)
-    ? product.assets.map((asset: unknown) => String(asset).trim()).filter(Boolean)
-    : [];
+  const product = (await response.json()) as Record<string, unknown>;
+  const assetIds = Array.isArray(product.assets) ? product.assets.map(asset => String(asset).trim()).filter(Boolean) : [];
   const [definitionMap, assetMap] = await Promise.all([
     fetchDefinitions(tenant, token),
     fetchAssetDownloads(tenant, token, assetIds),
   ]);
   const media = buildProductMedia(assetIds, assetMap);
-  const attributes = Array.isArray(product?.attributes) ? enrichAttributes(product.attributes, definitionMap) : [];
+  const attributes = Array.isArray(product.attributes)
+    ? (enrichAttributes(product.attributes as unknown[], definitionMap) as Array<Record<string, unknown>>)
+    : [];
 
   return normalizeCatalogProduct(product, media, attributes, {
     assetIds,
@@ -694,7 +908,7 @@ const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
   });
 };
 
-const sendJson = (res: any, statusCode: number, body: unknown, headers: Record<string, string> = corsHeaders) => {
+const sendJson = (res: { status: (statusCode: number) => void; setHeader: (name: string, value: string) => void; send: (body: string) => void }, statusCode: number, body: unknown, headers: Record<string, string> = corsHeaders) => {
   res.status(statusCode);
   Object.entries(headers).forEach(([key, value]) => {
     res.setHeader(key, value);
@@ -703,7 +917,7 @@ const sendJson = (res: any, statusCode: number, body: unknown, headers: Record<s
   res.send(JSON.stringify(body));
 };
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req: { method?: string; query: Record<string, unknown>; headers?: Record<string, string | string[] | undefined>; url?: string }, res: { status: (statusCode: number) => void; setHeader: (name: string, value: string) => void; send: (body: string) => void; end: () => void }) {
   if (req.method === 'OPTIONS') {
     Object.entries(getCorsHeaders(req)).forEach(([key, value]) => {
       res.setHeader(key, value);
@@ -721,9 +935,9 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const tenantId = typeof req.query.tenant === 'string' ? req.query.tenant : DEFAULT_TENANT;
+    const query = parseCatalogQuery(req.query);
     const productId = typeof req.query.productId === 'string' ? req.query.productId.trim() : '';
-    const tenant = getTenantConfig(tenantId);
+    const tenant = getTenantConfig(query.tenantId);
 
     if (!tenant) {
       sendJson(res, 400, { error: 'Tenant not configured' }, getCorsHeaders(req));
@@ -736,10 +950,16 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    const products = await fetchProducts(tenant);
-    sendJson(res, 200, { data: products }, getCorsHeaders(req));
+    const catalogIndex = await getCatalogIndex(tenant);
+    const page = buildCatalogPage(catalogIndex, query);
+    sendJson(res, 200, { data: page.products, meta: page.meta }, getCorsHeaders(req));
   } catch (err: unknown) {
     console.error('[catalog] Internal error:', err);
-    sendJson(res, 500, { error: 'Internal server error' }, getCorsHeaders(req));
+    sendJson(
+      res,
+      500,
+      { error: err instanceof Error ? err.message : 'Internal server error' },
+      getCorsHeaders(req)
+    );
   }
 }
