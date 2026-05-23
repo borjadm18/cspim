@@ -1,4 +1,7 @@
 ﻿/// <reference types="node" />
+import { createClient } from '@supabase/supabase-js';
+import { requireAuth } from './_lib/auth';
+import { checkRateLimit, getClientIp } from './_lib/rateLimit';
 type TenantConfig = {
   clientId: string;
   clientSecret: string;
@@ -36,11 +39,22 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
-const getCorsHeaders = (request: Request) => {
-  const origin = request.headers.get('origin');
+const getCorsHeaders = (request: Request | { headers?: Record<string, string | string[] | undefined>; url?: string }) => {
+  const headerSource =
+    request && typeof request === 'object' && 'headers' in request ? (request as any).headers : undefined;
+  const origin =
+    typeof headerSource?.get === 'function'
+      ? headerSource.get('origin')
+      : Array.isArray(headerSource?.origin)
+        ? headerSource.origin[0]
+        : headerSource?.origin;
   if (!origin) return corsHeaders;
 
-  const requestOrigin = new URL(request.url).origin;
+  const requestUrl =
+    typeof (request as any)?.url === 'string'
+      ? (request as any).url
+      : `https://${Array.isArray(headerSource?.host) ? headerSource.host[0] : headerSource?.host || 'content-store-omega.vercel.app'}`;
+  const requestOrigin = new URL(requestUrl).origin;
   const allowList = (process.env.CATALOG_ALLOWED_ORIGINS || '')
     .split(',')
     .map(item => item.trim())
@@ -64,7 +78,21 @@ type CatalogCacheEntry = {
   fetchedAt: number;
 };
 const catalogCache = new Map<string, CatalogCacheEntry>();
+const fetchInFlight = new Map<string, Promise<any[]>>();
 const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const SUPABASE_CACHE_TTL_MS = 30 * 60 * 1000;
+
+let supabaseAdminClient: ReturnType<typeof createClient> | null | undefined = undefined;
+
+const getSupabaseAdmin = () => {
+  if (supabaseAdminClient !== undefined) return supabaseAdminClient;
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) { supabaseAdminClient = null; return null; }
+  supabaseAdminClient = createClient(url, key, { auth: { persistSession: false } });
+  return supabaseAdminClient;
+};
+const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
 
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
@@ -140,7 +168,7 @@ const normalizeDefinition = (definition: any): DefinitionRecord | null => {
   };
 };
 
-const parseTenantMap = (): TenantConfigMap => {
+const TENANT_MAP: TenantConfigMap = (() => {
   const raw = process.env.BLUESTONE_TENANTS_JSON;
   if (!raw) {
     const clientId = process.env.BLUESTONE_CLIENT_ID;
@@ -171,12 +199,10 @@ const parseTenantMap = (): TenantConfigMap => {
   } catch {
     return {};
   }
-};
+})();
 
-const getTenantConfig = (tenantId: string): TenantConfig | null => {
-  const tenants = parseTenantMap();
-  return tenants[tenantId] || tenants[DEFAULT_TENANT] || null;
-};
+const getTenantConfig = (tenantId: string): TenantConfig | null =>
+  TENANT_MAP[tenantId] || TENANT_MAP[DEFAULT_TENANT] || null;
 
 const getBaseUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com');
 const getTokenUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://idp.test.bluestonepim.com/op/token' : 'https://idp.bluestonepim.com/op/token');
@@ -307,6 +333,14 @@ const chunk = <T,>(items: T[], size: number) => {
   return result;
 };
 
+const extractPreviewAssetIds = (product: any, maxAssets = CATALOG_PREVIEW_ASSETS_PER_PRODUCT) => {
+  if (!Array.isArray(product?.assets)) return [];
+  return product.assets
+    .map((asset: unknown) => String(asset).trim())
+    .filter(Boolean)
+    .slice(0, maxAssets);
+};
+
 const mapWithConcurrency = async <T, R>(
   items: T[],
   concurrency: number,
@@ -327,6 +361,16 @@ const mapWithConcurrency = async <T, R>(
 };
 
 const isImageFileName = (fileName: string) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
+
+const scoreImageByFileName = (image: { alt?: string; url?: string; isPrimary?: boolean }) => {
+  const descriptor = (image.alt || image.url || '').toLowerCase();
+  let score = 0;
+  const positive = ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render'];
+  const negative = ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimension'];
+  for (const kw of positive) if (descriptor.includes(kw)) score += 80;
+  for (const kw of negative) if (descriptor.includes(kw)) score -= 260;
+  return score;
+};
 
 const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds: string[]) => {
   const uniqueAssetIds = [...new Set(assetIds.map(assetId => String(assetId).trim()).filter(Boolean))];
@@ -401,6 +445,7 @@ const buildProductMedia = (assetIds: string[], assetMap: Map<string, { assetId: 
     });
   }
 
+  images.sort((a, b) => scoreImageByFileName(b) - scoreImageByFileName(a));
   return { images, attachments };
 };
 
@@ -424,13 +469,113 @@ const enrichAttributes = (attributes: any[], definitionMap: Map<string, Definiti
     };
   });
 
+const buildAttributeSearchText = (attributes: any[]) =>
+  attributes
+    .map(attribute =>
+      [
+        attribute?.definitionName,
+        attribute?.name,
+        attribute?.group,
+        attribute?.dataType,
+        attribute?.displayValue,
+        attribute?.value,
+      ]
+        .map(value => cleanText(value).trim())
+        .filter(Boolean)
+        .join(' ')
+    )
+    .filter(Boolean)
+    .join(' ');
+
+const normalizeCatalogProduct = (
+  product: any,
+  media: { images: Array<{ id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean }>; attachments: Array<{ id: string; name: string; url: string; downloadUrl: string; type: string }> },
+  attributes: any[],
+  options?: { assetIds?: string[]; includeAttributes?: boolean; includeMediaUrls?: boolean }
+) => {
+  const metadata = product?.metadata || {};
+  const metadataName = extractLocalizedValue(metadata?.name);
+  const metadataDescription = extractLocalizedValue(metadata?.description);
+  const metadataNumber = extractLocalizedValue(metadata?.number);
+  const metadataType = extractLocalizedValue(metadata?.type);
+  const metadataBrand = extractLocalizedValue(
+    metadata?.brand || metadata?.manufacturer || metadata?.vendor || metadata?.publisher
+  );
+  const assetIds = options?.assetIds ?? extractPreviewAssetIds(product);
+  const includeAttributes = options?.includeAttributes ?? true;
+  const includeMediaUrls = options?.includeMediaUrls ?? true;
+  const previewImage = media.images[0];
+  const previewImageAssetId = previewImage?.id ?? options?.assetIds?.[0];
+
+  return {
+    id: String(product?.id || product?._id || metadata?.id || metadata?.number || ''),
+    name: cleanText(metadataName || product?.name || product?.title || product?.description || 'Producto'),
+    description: cleanText(metadataDescription || extractLocalizedValue(product?.description) || ''),
+    sku: cleanText(metadataNumber || product?.number || product?.sku || ''),
+    number: cleanText(metadataNumber || product?.number || ''),
+    variantParentId: cleanText(metadata?.variantParentId || product?.variantParentId || ''),
+    images: includeMediaUrls ? media.images : [],
+    attachments: includeMediaUrls ? media.attachments : [],
+    previewImageAssetId,
+    previewImageAlt: previewImage?.alt,
+    assets: assetIds,
+    attributes: includeAttributes ? attributes : [],
+    attributeText: buildAttributeSearchText(attributes),
+    categories: Array.isArray(product?.categories)
+      ? product.categories.map((category: unknown) => String(category)).filter(Boolean)
+      : [],
+    category: cleanText(metadataType || product?.type || 'Sin categoría'),
+    brand: cleanText(metadataBrand || product?.brand || product?.manufacturer || product?.vendor || ''),
+    stock: typeof product?.stock === 'number' ? product.stock : undefined,
+    type: cleanText(metadataType || product?.type || ''),
+    state: metadata?.state || product?.state,
+    publicationState: metadata?.publicationState || product?.publicationState,
+    lastUpdate: metadata?.lastUpdate || product?.lastUpdate,
+    updatedAt: metadata?.updatedAt || product?.updatedAt,
+    createDate: metadata?.createDate || product?.createDate,
+    updatedBy: metadata?.updatedBy || product?.updatedBy,
+    lastUpdatedBy: metadata?.lastUpdatedBy || product?.lastUpdatedBy,
+    variants: Array.isArray(product?.variants) ? product.variants : [],
+    relations: Array.isArray(product?.relations) ? product.relations : [],
+  };
+};
+
 const fetchProducts = async (tenant: TenantConfig) => {
   const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
+
+  // L1: in-memory cache (10 min — survives within a warm serverless instance)
   const cached = catalogCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CATALOG_CACHE_TTL_MS) {
     return cached.data;
   }
 
+  // L2: Supabase persistent cache (30 min — survives cold starts)
+  if (!fetchInFlight.has(cacheKey)) {
+    try {
+      const supabase = getSupabaseAdmin();
+      if (supabase) {
+        const { data: row } = await supabase
+          .from('catalog_cache')
+          .select('products, fetched_at')
+          .eq('tenant_key', cacheKey)
+          .single();
+        if (row && Date.now() - new Date(row.fetched_at as string).getTime() < SUPABASE_CACHE_TTL_MS) {
+          const products = row.products as any[];
+          catalogCache.set(cacheKey, { data: products, fetchedAt: Date.now() });
+          return products;
+        }
+      }
+    } catch {
+      // Supabase unavailable — fall through to Bluestone fetch
+    }
+  }
+
+  const inFlight = fetchInFlight.get(cacheKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const fetchPromise = (async () => {
   try {
     const token = await getAccessToken(tenant);
     const baseUrl = getBaseUrl(tenant.env);
@@ -473,30 +618,29 @@ const fetchProducts = async (tenant: TenantConfig) => {
     cursor = payload?.nextCursor || payload?.cursor || null;
   } while (cursor);
 
-  const assetIds = allProducts.flatMap(product => (Array.isArray(product?.assets) ? product.assets.map((asset: unknown) => String(asset)).filter(Boolean) : []));
-  const [definitionMap, assetMap] = await Promise.all([
-    fetchDefinitions(tenant, token),
-    fetchAssetDownloads(tenant, token, assetIds),
-  ]);
-
   const normalizedProducts = allProducts.map(product => {
-    const media = buildProductMedia(
-      Array.isArray(product?.assets) ? product.assets.map((asset: unknown) => String(asset)).filter(Boolean) : [],
-      assetMap
-    );
-    const attributes = Array.isArray(product?.attributes) ? enrichAttributes(product.attributes, definitionMap) : [];
-
-    return {
-      ...product,
-      attributes,
-      ...media,
-    };
+    const previewAssetIds = extractPreviewAssetIds(product);
+    return normalizeCatalogProduct(product, { images: [], attachments: [] }, [], {
+      assetIds: previewAssetIds,
+      includeAttributes: false,
+      includeMediaUrls: false,
+    });
   });
 
     catalogCache.set(cacheKey, {
       data: normalizedProducts,
       fetchedAt: Date.now(),
     });
+
+    // Write-back to Supabase L2 cache (fire-and-forget)
+    const supabase = getSupabaseAdmin();
+    if (supabase) {
+      supabase
+        .from('catalog_cache')
+        .upsert({ tenant_key: cacheKey, products: normalizedProducts, fetched_at: new Date().toISOString() })
+        .then(() => {})
+        .catch(() => {});
+    }
 
     return normalizedProducts;
   } catch (error) {
@@ -506,6 +650,50 @@ const fetchProducts = async (tenant: TenantConfig) => {
 
     throw error;
   }
+  })();
+
+  fetchInFlight.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    fetchInFlight.delete(cacheKey);
+  }
+};
+
+const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
+  const token = await getAccessToken(tenant);
+  const baseUrl = getBaseUrl(tenant.env);
+  const response = await fetchWithRetry(`${baseUrl}/pim/products/${encodeURIComponent(productId)}`, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${token}`,
+      'x-organization-id': tenant.orgId,
+      context: tenant.context || 'en',
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Bluestone product request failed (${response.status}): ${errorText}`);
+  }
+
+  const product = await response.json();
+  const assetIds = Array.isArray(product?.assets)
+    ? product.assets.map((asset: unknown) => String(asset).trim()).filter(Boolean)
+    : [];
+  const [definitionMap, assetMap] = await Promise.all([
+    fetchDefinitions(tenant, token),
+    fetchAssetDownloads(tenant, token, assetIds),
+  ]);
+  const media = buildProductMedia(assetIds, assetMap);
+  const attributes = Array.isArray(product?.attributes) ? enrichAttributes(product.attributes, definitionMap) : [];
+
+  return normalizeCatalogProduct(product, media, attributes, {
+    assetIds,
+    includeAttributes: true,
+    includeMediaUrls: true,
+  });
 };
 
 const sendJson = (res: any, statusCode: number, body: unknown, headers: Record<string, string> = corsHeaders) => {
@@ -526,8 +714,17 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
+  const auth = await requireAuth(req, res);
+  if (!auth) return;
+
+  if (!checkRateLimit(`${getClientIp(req)}:catalog`, 30, 60_000)) {
+    sendJson(res, 429, { error: 'Too many requests' }, getCorsHeaders(req));
+    return;
+  }
+
   try {
     const tenantId = typeof req.query.tenant === 'string' ? req.query.tenant : DEFAULT_TENANT;
+    const productId = typeof req.query.productId === 'string' ? req.query.productId.trim() : '';
     const tenant = getTenantConfig(tenantId);
 
     if (!tenant) {
@@ -535,12 +732,16 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    if (productId) {
+      const product = await fetchProductDetail(tenant, productId);
+      sendJson(res, 200, { data: product }, getCorsHeaders(req));
+      return;
+    }
+
     const products = await fetchProducts(tenant);
     sendJson(res, 200, { data: products }, getCorsHeaders(req));
-  } catch (error) {
-    sendJson(res, 500, {
-      error: 'Failed to fetch catalog',
-      message: error instanceof Error ? error.message : 'Unknown error',
-    }, getCorsHeaders(req));
+  } catch (err: unknown) {
+    console.error('[catalog] Internal error:', err);
+    sendJson(res, 500, { error: 'Internal server error' }, getCorsHeaders(req));
   }
 }

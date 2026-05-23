@@ -1,26 +1,38 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Check,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  CircleDot,
-  Clock3,
   Copy,
   Download,
-  ExternalLink,
   Eye,
-  FileText,
   Languages,
-  Layers,
-  Plus,
-  Upload,
   X,
 } from 'lucide-react';
 import type { Product, ProductImage } from '../api/productService';
-import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel, getVariantSwatchColor } from '../selectors/catalogSelectors';
+import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel } from '../selectors/catalogSelectors';
+import { ProductContentTab } from './ProductContentTab';
+import { ProductVariantsPanel } from './ProductVariantsPanel';
+import {
+  DEFAULT_LOCALES,
+  TECHNICAL_IMAGE_KEYWORDS,
+  STATUS_META,
+  STATUS_ORDER,
+  buildAttributeLookup,
+  extractTextValue,
+  fallbackImage,
+  firstAvailableBoolean,
+  firstAvailableNumber,
+  firstAvailableText,
+  formatDate,
+  getProductStatus,
+  isFileLikeAttribute,
+  isRenderableValue,
+  normalizeKey,
+  normalizeText,
+} from './productModalUtils';
 
-type SheetTab = 'contenido' | 'variantes' | 'historial' | 'canales';
+type SheetTab = 'contenido' | 'variantes';
 type ProductStatus = 'draft' | 'pending' | 'published';
 type LocaleCode = 'ES' | 'EN' | 'FR' | 'DE' | 'CA';
 
@@ -38,382 +50,30 @@ interface ProductModalProps {
   onAddDocument?: () => void;
   onAddVariant?: () => void;
   onNavigateBreadcrumb?: (segment: 'catalog' | 'category' | 'product', value?: string) => void;
+  catalogProducts?: Product[];
   parentProduct?: Product | null;
   currentUserRole?: 'admin' | 'content_manager' | 'commercial';
+  onDirtyChange?: (isDirty: boolean) => void;
+  tenantId?: string;
 }
 
-const DEFAULT_LOCALES: LocaleCode[] = ['ES', 'EN', 'FR', 'DE', 'CA'];
-const STATUS_META: Record<ProductStatus, { label: string; className: string; icon: typeof CircleDot }> = {
-  draft: { label: 'Borrador', className: 'bg-amber-100 text-amber-800', icon: CircleDot },
-  pending: { label: 'Por publicar', className: 'bg-blue-100 text-blue-800', icon: Clock3 },
-  published: { label: 'Publicado', className: 'bg-green-100 text-green-800', icon: CheckCircle2 },
-};
-
-const STATUS_ORDER: ProductStatus[] = ['draft', 'pending', 'published'];
-
-const fallbackImage = (title: string) => {
-  const safeTitle = title.slice(0, 28);
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 720" fill="none">
-      <rect width="960" height="720" rx="32" fill="#f8fafc"/>
-      <rect x="160" y="120" width="640" height="420" rx="24" fill="#e2e8f0"/>
-      <rect x="196" y="156" width="568" height="348" rx="18" fill="#ffffff"/>
-      <path d="M286 362h388" stroke="#cbd5e1" stroke-width="14" stroke-linecap="round"/>
-      <path d="M360 278h240" stroke="#cbd5e1" stroke-width="14" stroke-linecap="round"/>
-      <text x="50%" y="632" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#64748b">${safeTitle}</text>
-    </svg>
-  `;
-
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
-};
-
-const normalizeText = (value: unknown) => cleanText(value).trim();
-
-const formatValue = (value: unknown): string => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'boolean') return value ? 'Sí' : 'No';
-  if (typeof value === 'number') return String(value);
-  if (typeof value === 'string') return cleanText(value);
-  if (Array.isArray(value)) return value.map(item => formatValue(item)).filter(Boolean).join(', ');
-  if (typeof value === 'object') {
-    const record = value as Record<string, any>;
-    const candidateKeys = ['displayValue', 'value', 'values', 'text', 'label', 'name', 'description'];
-    for (const key of candidateKeys) {
-      if (record[key] !== undefined && record[key] !== null) {
-        const text = formatValue(record[key]);
-        if (text) return text;
-      }
-    }
-
-    const localeCandidate = ['es', 'en', 'pt', 'fr', 'de', 'it']
-      .map(locale => record[locale])
-      .find(candidate => candidate !== undefined && candidate !== null && String(candidate).trim());
-    if (localeCandidate !== undefined) return formatValue(localeCandidate);
-
-    const primitiveValues = Object.values(record)
-      .map(item => formatValue(item))
-      .filter(item => item && item !== '[object Object]');
-    if (primitiveValues.length) return primitiveValues.join(', ');
+const scoreCatalogImage = (image: ProductImage) => {
+  const descriptor = normalizeKey([image.alt, image.downloadUrl, image.url].filter(Boolean).join(' '));
+  let score = 0;
+  for (const keyword of ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render']) {
+    if (descriptor.includes(keyword)) score += 120;
   }
-
-  return '';
-};
-
-const extractTextValue = (value: unknown): string => {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-    return formatValue(value);
+  for (const keyword of TECHNICAL_IMAGE_KEYWORDS) {
+    if (descriptor.includes(keyword)) score -= 500;
   }
-
-  if (Array.isArray(value)) {
-    return value.map(item => extractTextValue(item)).filter(Boolean).join(', ');
-  }
-
-  if (typeof value === 'object') {
-    const record = value as Record<string, any>;
-    const candidateKeys = ['displayValue', 'value', 'values', 'text', 'label', 'name', 'description'];
-    for (const key of candidateKeys) {
-      if (record[key] !== undefined && record[key] !== null) {
-        const text = extractTextValue(record[key]);
-        if (text) return text;
-      }
-    }
-
-    const localeCandidate = ['es', 'en', 'pt', 'fr', 'de', 'it']
-      .map(locale => record[locale])
-      .find(candidate => candidate !== undefined && candidate !== null && String(candidate).trim());
-    if (localeCandidate !== undefined) return extractTextValue(localeCandidate);
-
-    const primitiveValues = Object.values(record)
-      .map(item => extractTextValue(item))
-      .filter(Boolean);
-    if (primitiveValues.length) return primitiveValues.join(', ');
-  }
-
-  return '';
+  if (image.isPrimary) score += 160;
+  if (/\.(jpe?g|png|webp)(\?|$)/i.test(descriptor)) score += 8;
+  if (!image.alt || cleanText(image.alt).trim() === 'Imagen') score -= 12;
+  return score;
 };
 
-const formatDate = (value?: unknown) => {
-  if (!value) return '';
-  const date = new Date(typeof value === 'number' ? value : String(value));
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('es-ES', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date);
-};
-
-const resolveFileName = (url: string, fallback: string) => {
-  try {
-    const parsed = new URL(url);
-    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop();
-    if (!lastSegment) return fallback;
-    return decodeURIComponent(lastSegment);
-  } catch {
-    return fallback;
-  }
-};
-
-const triggerDownload = async (url?: string, fileName?: string) => {
-  if (!url) return;
-
-  try {
-    const response = await fetch(url, { mode: 'cors' });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = objectUrl;
-    anchor.download = fileName || 'archivo';
-    anchor.rel = 'noopener noreferrer';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(objectUrl);
-    return;
-  } catch {
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.target = '_blank';
-    anchor.rel = 'noopener noreferrer';
-    if (fileName) anchor.download = fileName;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  }
-};
-
-const normalizeKey = (value: string) => normalizeText(value).toLowerCase();
-
-const attributeKeys = (attr: any) =>
-  [
-    attr.key,
-    attr.definitionName,
-    attr.name,
-    attr.label,
-    attr.definitionId,
-    attr.group,
-    attr.groupName,
-  ]
-    .map(normalizeText)
-    .filter(Boolean);
-
-const valueFromAttribute = (attr: any) => formatValue(attr?.displayValue ?? attr?.value ?? attr?.values);
-
-const isRenderableValue = (value: unknown) => {
-  if (value === null || value === undefined) return false;
-  const text = formatValue(value).trim();
-  if (!text) return false;
-  const lower = text.toLowerCase();
-  return lower !== 'null' && lower !== 'undefined' && lower !== 'n/a';
-};
-
-const getProductStatus = (product: Product): ProductStatus => {
-  const raw = normalizeKey(product.status || (product as any).state || (product as any).publicationState || '');
-  if (raw.includes('publish')) return 'published';
-  if (raw.includes('draft')) return 'draft';
-  if (raw.includes('pending') || raw.includes('ready')) return 'pending';
-  return 'pending';
-};
-
-const parseBooleanValue = (value: unknown): boolean | undefined => {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) return undefined;
-    if (['true', '1', 'yes', 'si', 'sí', 'visible', 'activo'].includes(normalized)) return true;
-    if (['false', '0', 'no', 'oculto', 'inactivo'].includes(normalized)) return false;
-  }
-  return undefined;
-};
-
-const buildAttributeLookup = (attributes: any[]) => {
-  const lookup = new Map<string, any>();
-  for (const attr of attributes) {
-    for (const key of attributeKeys(attr)) {
-      lookup.set(key, attr);
-    }
-  }
-  return lookup;
-};
-
-const readTopLevelValue = (product: Product, keys: string[]) => {
-  for (const key of keys) {
-    const direct = (product as any)[key];
-    if (isRenderableValue(direct)) return direct;
-    const lowerKey = key.toLowerCase();
-    const directMatch = Object.entries(product as Record<string, any>).find(([candidate]) => candidate.toLowerCase() === lowerKey);
-    if (directMatch && isRenderableValue(directMatch[1])) return directMatch[1];
-  }
-  return undefined;
-};
-
-const readAttributeValue = (lookup: Map<string, any>, keys: string[]) => {
-  for (const key of keys) {
-    const attr = lookup.get(normalizeKey(key));
-    if (!attr) continue;
-    const value = valueFromAttribute(attr);
-    if (value) return { attr, value };
-  }
-  return null;
-};
-
-const firstAvailableText = (product: Product, lookup: Map<string, any>, topLevelKeys: string[], attributeKeysList: string[]) => {
-  const top = readTopLevelValue(product, topLevelKeys);
-  if (isRenderableValue(top)) return formatValue(top);
-  const attr = readAttributeValue(lookup, attributeKeysList);
-  return attr?.value || '';
-};
-
-const firstAvailableNumber = (product: Product, lookup: Map<string, any>, topLevelKeys: string[], attributeKeysList: string[]) => {
-  const top = readTopLevelValue(product, topLevelKeys);
-  if (top !== undefined && top !== null && String(top).trim()) {
-    const parsed = typeof top === 'number' ? top : Number(String(top).replace(',', '.'));
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  const attr = readAttributeValue(lookup, attributeKeysList);
-  if (attr?.value) {
-    const parsed = Number(String(attr.value).replace(',', '.'));
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-  return undefined;
-};
-
-const firstAvailableBoolean = (product: Product, lookup: Map<string, any>, topLevelKeys: string[], attributeKeysList: string[]) => {
-  const top = readTopLevelValue(product, topLevelKeys);
-  const parsedTop = parseBooleanValue(top);
-  if (parsedTop !== undefined) return parsedTop;
-  const attr = readAttributeValue(lookup, attributeKeysList);
-  return attr ? parseBooleanValue(attr.value) : undefined;
-};
-
-const normalizeAttachmentName = (attachment: any) => cleanText(attachment.name || attachment.fileName || 'Documento');
-
-const isUrlLikeString = (value: unknown) => {
-  const text = formatValue(value).trim();
-  return /^https?:\/\//i.test(text);
-};
-
-const getFriendlyUrlLabel = (url: string) => {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\./i, '');
-    const lastSegment = parsed.pathname.split('/').filter(Boolean).pop();
-    if (!lastSegment) return host;
-    const decoded = decodeURIComponent(lastSegment);
-    return decoded.length > 42 ? `${host} · ${decoded.slice(0, 39)}…` : `${host} · ${decoded}`;
-  } catch {
-    return url;
-  }
-};
-
-
-const PlaceholderPanel = ({ text = 'Sección en desarrollo' }: { text?: string }) => (
-  <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-    {text}
-  </div>
-);
-
-const FILE_ATTRIBUTE_KEYWORDS = [
-  'url',
-  'link',
-  'enlace',
-  'archivo',
-  'fichero',
-  'ficha tecnica',
-  'ficha técnica',
-  'pdf',
-  'manual',
-  'download',
-  'descarga',
-  '2d',
-  '3d',
-  'dwg',
-];
-
-const getAttributeLabel = (attr: any) => cleanText(attr?.label || attr?.definitionName || attr?.name || attr?.definitionId || 'Atributo');
-
-const getAttributeHref = (attr: any) => {
-  const candidates = [attr?.downloadUrl, attr?.url, attr?.fileUrl, attr?.href, attr?.displayValue, attr?.value, attr?.values];
-  for (const candidate of candidates) {
-    const text = extractTextValue(candidate).trim();
-    if (/^https?:\/\//i.test(text)) return text;
-  }
-  return '';
-};
-
-const isFileLikeAttribute = (attr: any) => {
-  const label = normalizeKey(getAttributeLabel(attr));
-  const href = getAttributeHref(attr);
-  const valueText = normalizeKey(formatValue(attr?.displayValue ?? attr?.value ?? attr?.values));
-
-  if (href || isUrlLikeString(attr?.displayValue ?? attr?.value ?? attr?.values)) return true;
-  return FILE_ATTRIBUTE_KEYWORDS.some(keyword => label.includes(keyword) || valueText.includes(keyword));
-};
-
-const getAttributeFileKind = (attr: any, href: string) => {
-  const label = normalizeKey(getAttributeLabel(attr));
-  const lowerHref = href.toLowerCase();
-  if (label.includes('pdf') || lowerHref.endsWith('.pdf')) return 'PDF';
-  if (label.includes('dwg') || lowerHref.endsWith('.dwg')) return 'DWG';
-  if (label.includes('3d')) return '3D';
-  if (label.includes('2d')) return '2D';
-  if (label.includes('manual')) return 'Manual';
-  if (label.includes('url') || label.includes('link') || label.includes('enlace')) return 'Enlace';
-  return 'Archivo';
-};
-
-const getAttributeFileName = (attr: any, href: string) => {
-  const label = getAttributeLabel(attr);
-  if (href) {
-    const fileName = resolveFileName(href, label);
-    if (fileName) return fileName;
-  }
-
-  const valueText = formatValue(attr?.displayValue ?? attr?.value ?? attr?.values).trim();
-  if (valueText && !isUrlLikeString(valueText)) return valueText;
-  if (isUrlLikeString(valueText)) return getFriendlyUrlLabel(valueText);
-  return label;
-};
-
-const renderAttributeValueNode = (attr: any) => {
-  const rawValue = attr?.displayValue ?? attr?.value ?? attr?.values;
-  const boolValue = parseBooleanValue(rawValue);
-  const textValue = formatValue(rawValue).trim();
-
-  if (boolValue !== undefined) {
-    return (
-      <span
-        className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${
-          boolValue ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-        }`}
-      >
-        {boolValue ? 'Sí' : 'No'}
-      </span>
-    );
-  }
-
-  if (!textValue) return null;
-
-  if (/^https?:\/\//i.test(textValue)) {
-    const friendlyLabel = getFriendlyUrlLabel(textValue);
-    return (
-      <a
-        href={textValue}
-        target="_blank"
-        rel="noreferrer"
-        className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)] px-3 py-1.5 text-sm font-medium text-[color:var(--catalog-accent-ink)] transition hover:border-[color:var(--catalog-accent)] hover:bg-white"
-      >
-        <ExternalLink className="h-3.5 w-3.5" />
-        <span className="truncate">{friendlyLabel}</span>
-      </a>
-    );
-  }
-
-  return <p className="text-sm font-medium text-slate-900">{textValue}</p>;
-};
+const sortCatalogImages = (items: ProductImage[]) =>
+  [...items].filter(Boolean).sort((a, b) => scoreCatalogImage(b) - scoreCatalogImage(a));
 
 export function ProductModal({
   product,
@@ -429,8 +89,11 @@ export function ProductModal({
   onAddDocument,
   onAddVariant,
   onNavigateBreadcrumb,
+  catalogProducts: _catalogProducts,
   parentProduct,
   currentUserRole = 'admin',
+  onDirtyChange,
+  tenantId,
 }: ProductModalProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
@@ -438,55 +101,24 @@ export function ProductModal({
   const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
   const [localLocale, setLocalLocale] = useState<LocaleCode>('ES');
   const [copiedSku, setCopiedSku] = useState('');
+  const hasUnsavedChangesRef = useRef(false);
+  const onPrevRef = useRef(onPrev);
+  const onNextRef = useRef(onNext);
+  const onCloseRef = useRef(onClose);
+
   const canEditVisibility = currentUserRole === 'admin' || currentUserRole === 'content_manager';
   const canEditStatus = canEditVisibility;
   const canSave = canEditVisibility;
   const isVariantProduct = normalizeKey(product.type) === 'variant';
-  const isGroupProduct = normalizeKey(product.type) === 'group';
-  const showHistoryTab = false;
-  const showChannelsTab = false;
+  const isGroupProduct = normalizeKey(product.type) === 'group' || Boolean((product as any).isVariantGroup);
   const variantSourceProduct = parentProduct && parentProduct.id !== product.id ? parentProduct : product;
-  const variantRows = useMemo(() => (Array.isArray((variantSourceProduct as any).variants) ? (variantSourceProduct as any).variants : []), [
-    variantSourceProduct,
-  ]);
-  const showVariantsTab = normalizeKey(product.type) === 'group' || isVariantProduct;
+  const variantRows = useMemo(
+    () => (Array.isArray((variantSourceProduct as any).variants) ? (variantSourceProduct as any).variants : []),
+    [variantSourceProduct]
+  );
+  const showVariantsTab = normalizeKey(product.type) === 'group' || isVariantProduct || Boolean((product as any).isVariantGroup);
 
-  const TECHNICAL_IMAGE_KEYWORDS = [
-    'plano',
-    'drawing',
-    'dibujo',
-    'esquema',
-    'technical',
-    'technical drawing',
-    'dimensiones',
-    'medidas',
-    'dwg',
-    'cad',
-    'line',
-  ];
-
-  const scoreCatalogImage = (image: ProductImage) => {
-    const descriptor = normalizeKey([image.alt, image.downloadUrl, image.url].filter(Boolean).join(' '));
-    let score = 0;
-
-    for (const keyword of ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render']) {
-      if (descriptor.includes(keyword)) score += 120;
-    }
-
-    for (const keyword of TECHNICAL_IMAGE_KEYWORDS) {
-      if (descriptor.includes(keyword)) score -= 500;
-    }
-
-    if (image.isPrimary) score += 160;
-    if (/\.(jpe?g|png|webp)(\?|$)/i.test(descriptor)) score += 8;
-    if (!image.alt || cleanText(image.alt).trim() === 'Imagen') score -= 12;
-
-    return score;
-  };
-
-  const sortCatalogImages = (items: ProductImage[]) => [...items].filter(Boolean).sort((a, b) => scoreCatalogImage(b) - scoreCatalogImage(a));
-
-  const images = sortCatalogImages(product.images || []);
+  const images = useMemo(() => sortCatalogImages(product.images || []), [product.images]);
   const attachments = (product as any).attachments || [];
   const variants = variantRows;
   const categoryIds = Array.isArray((product as any).categories) ? (product as any).categories : [];
@@ -506,7 +138,6 @@ export function ProductModal({
     const rawAttributes = Array.isArray(product.attributes)
       ? product.attributes
       : Object.entries(product.attributes || {}).map(([name, value]) => ({ name, value }));
-
     return rawAttributes.filter((attr: any) => {
       const attrName = normalizeText(attr.definitionName || attr.name || attr.label || attr.definitionId || '');
       const attrValue = attr.displayValue ?? attr.value ?? attr.values;
@@ -514,75 +145,32 @@ export function ProductModal({
     });
   }, [product.attributes]);
 
-  const fileAttributes = useMemo(
-    () => attributes.filter((attr: any) => isFileLikeAttribute(attr)),
-    [attributes]
-  );
+  const fileAttributes = useMemo(() => attributes.filter((attr: any) => isFileLikeAttribute(attr)), [attributes]);
   const attributeLookup = useMemo(() => buildAttributeLookup(attributes), [attributes]);
   const attributeGroups = useMemo(() => {
     const groups = new Map<string, any[]>();
-
     for (const attribute of attributes as any[]) {
       if (isFileLikeAttribute(attribute)) continue;
       const value = attribute?.displayValue ?? attribute?.value ?? attribute?.values;
       if (!isRenderableValue(value)) continue;
-
       const groupName = normalizeText(attribute.group || attribute.groupName || '').trim() || 'Sin grupo';
       const label = normalizeText(attribute.definitionName || attribute.name || attribute.label || attribute.definitionId || 'Atributo');
-      const nextAttribute = {
-        ...attribute,
-        label,
-        group: groupName,
-      };
-
-      if (!groups.has(groupName)) {
-        groups.set(groupName, []);
-      }
-
-      groups.get(groupName)!.push(nextAttribute);
+      if (!groups.has(groupName)) groups.set(groupName, []);
+      groups.get(groupName)!.push({ ...attribute, label, group: groupName });
     }
-
-    return Array.from(groups.entries()).map(([groupName, groupAttributes]) => ({
-      groupName,
-      attributes: groupAttributes,
-    }));
+    return Array.from(groups.entries()).map(([groupName, groupAttributes]) => ({ groupName, attributes: groupAttributes }));
   }, [attributes]);
 
   const attributeSnapshot = useMemo(() => {
-    const ean = firstAvailableText(
-      product,
-      attributeLookup,
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
-      ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'],
-    );
-    const baseRef = firstAvailableText(
-      product,
-      attributeLookup,
-      ['baseRef', 'referenciaBaseAcabado', 'referencia base acabado', 'reference', 'ref'],
-      ['referenciaBaseAcabado', 'referencia base acabado', 'base ref', 'referencia', 'ref']
-    );
-    const visibleOnWeb = firstAvailableBoolean(
-      product,
-      attributeLookup,
-      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web'],
-      ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web']
-    );
+    const ean = firstAvailableText(product, attributeLookup, ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean'], ['ean', 'EAN', 'codigoEAN', 'codigoEan', 'gtin', 'código ean', 'codigo ean']);
+    const baseRef = firstAvailableText(product, attributeLookup, ['baseRef', 'referenciaBaseAcabado', 'referencia base acabado', 'reference', 'ref'], ['referenciaBaseAcabado', 'referencia base acabado', 'base ref', 'referencia', 'ref']);
+    const visibleOnWeb = firstAvailableBoolean(product, attributeLookup, ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web'], ['visibleOnWeb', 'isWebVisible', 'webVisible', 'estaWeb', 'visible en web', 'esta web']);
     const price = firstAvailableNumber(product, attributeLookup, ['price', 'precio', 'pvp'], ['price', 'precio', 'pvp']);
     const weight = firstAvailableText(product, attributeLookup, ['weight', 'peso', 'peso (kg)'], ['weight', 'peso', 'peso (kg)']);
     const collection = firstAvailableText(product, attributeLookup, ['collection', 'coleccion', 'colección'], ['collection', 'coleccion', 'colección']);
     const range = firstAvailableText(product, attributeLookup, ['range', 'gama'], ['range', 'gama']);
-    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|técnica/i.test(normalizeAttachmentName(attachment)) || /pdf/i.test(String(attachment.type || '')));
-
-    return {
-      ean,
-      baseRef,
-      visibleOnWeb,
-      price,
-      weight,
-      collection,
-      range,
-      technicalSheet,
-    };
+    const technicalSheet = attachments.find((attachment: any) => /pdf|ficha|technical|tecnica|técnica/i.test(cleanText(attachment.name || attachment.fileName || 'Documento')) || /pdf/i.test(String(attachment.type || '')));
+    return { ean, baseRef, visibleOnWeb, price, weight, collection, range, technicalSheet };
   }, [attributeLookup, attachments, product]);
 
   const initialDraft = useMemo(
@@ -601,6 +189,7 @@ export function ProductModal({
   );
 
   const [draft, setDraft] = useState(() => initialDraft);
+  const [confirmedDraft, setConfirmedDraft] = useState(() => initialDraft);
 
   useEffect(() => {
     setCurrentImageIndex(0);
@@ -608,43 +197,43 @@ export function ProductModal({
     setActiveTab('contenido');
     setSaveState('idle');
     setDraft(initialDraft);
+    setConfirmedDraft(initialDraft);
   }, [initialDraft, product.id]);
 
   useEffect(() => {
-    if (!variantRows.length) {
-      setActiveVariantIndex(0);
-      return;
-    }
-
+    if (!variantRows.length) { setActiveVariantIndex(0); return; }
     const matchedIndex = variantRows.findIndex((variant: any) => variant.id === product.id);
     setActiveVariantIndex(matchedIndex >= 0 ? matchedIndex : 0);
   }, [product.id, variantRows]);
 
   const activeVariant = variants[activeVariantIndex];
   const variantImages = Array.isArray(activeVariant?.images) ? sortCatalogImages(activeVariant.images as ProductImage[]) : [];
+  const variantPreviewUrl =
+    !variantImages.length && activeVariant && (activeVariant as any).previewImageAssetId && tenantId
+      ? `/api/asset?tenant=${encodeURIComponent(tenantId)}&assetId=${encodeURIComponent((activeVariant as any).previewImageAssetId)}`
+      : undefined;
   const imageSet = variantImages.length ? variantImages : images;
   const currentImage = imageSet[currentImageIndex] || imageSet[0] || images[0];
-  const currentImageUrl = currentImage?.url || fallbackImage(productName);
+  const currentImageUrl = variantPreviewUrl || currentImage?.url || fallbackImage(productName);
   const currentImageFileName = currentImage?.alt || `${productName || 'imagen'}.jpg`;
   const lastUpdate = formatDate((product as any).lastUpdate || (product as any).updatedAt || (product as any).createDate);
-  const updatedBy = cleanText((product as any).updatedBy || (product as any).lastUpdatedBy || (product as any).authorEmail || 'admin@demo.com');
+  const updatedBy = cleanText((product as any).updatedBy || (product as any).lastUpdatedBy || (product as any).authorEmail || '—');
   const productId = cleanText(product.id);
   const shortId = productId.slice(0, 8) + (productId.length > 8 ? '…' : '');
-
-  const productStatus = STATUS_META[draft.status];
+  const productStatus = STATUS_META[draft.status as ProductStatus];
 
   const hasUnsavedChanges = useMemo(
     () =>
-      draft.description !== initialDraft.description ||
-      draft.ean !== initialDraft.ean ||
-      draft.baseRef !== initialDraft.baseRef ||
-      draft.visibleOnWeb !== initialDraft.visibleOnWeb ||
-      draft.price !== initialDraft.price ||
-      draft.weight !== initialDraft.weight ||
-      draft.collection !== initialDraft.collection ||
-      draft.range !== initialDraft.range ||
-      draft.status !== initialDraft.status,
-    [draft, initialDraft]
+      draft.description !== confirmedDraft.description ||
+      draft.ean !== confirmedDraft.ean ||
+      draft.baseRef !== confirmedDraft.baseRef ||
+      draft.visibleOnWeb !== confirmedDraft.visibleOnWeb ||
+      draft.price !== confirmedDraft.price ||
+      draft.weight !== confirmedDraft.weight ||
+      draft.collection !== confirmedDraft.collection ||
+      draft.range !== confirmedDraft.range ||
+      draft.status !== confirmedDraft.status,
+    [draft, confirmedDraft]
   );
 
   const confirmDiscardChanges = (action: () => void) => {
@@ -652,24 +241,46 @@ export function ProductModal({
       const confirmed = window.confirm('¿Descartar los cambios? Los datos no guardados se perderán.');
       if (!confirmed) return;
     }
-
     action();
   };
 
-  const savePayload = () => ({
-    description: draft.description,
-    ean: draft.ean,
-    baseRef: draft.baseRef,
-    visibleOnWeb: draft.visibleOnWeb,
-    price: draft.price.trim() ? Number(draft.price.replace(',', '.')) : undefined,
-    weight: draft.weight,
-    collection: draft.collection,
-    range: draft.range,
-    status: draft.status,
-  });
+  useEffect(() => { hasUnsavedChangesRef.current = hasUnsavedChanges; }, [hasUnsavedChanges]);
+  useEffect(() => { onPrevRef.current = onPrev; onNextRef.current = onNext; onCloseRef.current = onClose; });
+  useEffect(() => { onDirtyChange?.(hasUnsavedChanges); }, [hasUnsavedChanges, onDirtyChange]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
+      const confirmAndRun = (action: (() => void) | undefined) => {
+        if (!action) return;
+        if (hasUnsavedChangesRef.current) {
+          const confirmed = window.confirm('¿Descartar los cambios? Los datos no guardados se perderán.');
+          if (!confirmed) return;
+        }
+        action();
+      };
+      if (event.key === 'ArrowLeft') { confirmAndRun(onPrevRef.current); return; }
+      if (event.key === 'ArrowRight') { confirmAndRun(onNextRef.current); return; }
+      if (event.key === 'Escape') { confirmAndRun(onCloseRef.current); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []); // stable — all values accessed via refs
 
   const handleSave = () => {
-    onSave?.(savePayload());
+    onSave?.({
+      description: draft.description,
+      ean: draft.ean,
+      baseRef: draft.baseRef,
+      visibleOnWeb: draft.visibleOnWeb,
+      price: draft.price.trim() ? Number(draft.price.replace(',', '.')) : undefined,
+      weight: draft.weight,
+      collection: draft.collection,
+      range: draft.range,
+      status: draft.status,
+    } as Partial<Product>);
+    setConfirmedDraft(draft);
     setSaveState('saved');
     window.setTimeout(() => setSaveState('idle'), 1800);
   };
@@ -680,14 +291,7 @@ export function ProductModal({
       setCopiedSku(sku);
       window.setTimeout(() => setCopiedSku(''), 1200);
     } catch {
-      const input = document.createElement('input');
-      input.value = sku;
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand('copy');
-      input.remove();
-      setCopiedSku(sku);
-      window.setTimeout(() => setCopiedSku(''), 1200);
+      // Clipboard API unavailable in this context — fail silently
     }
   };
 
@@ -700,20 +304,13 @@ export function ProductModal({
 
   const exportPayload = () => {
     const payload = {
-      id: product.id,
-      name: product.name,
-      sku: productSku,
-      description: draft.description,
-      status: draft.status,
-      visibleOnWeb: draft.visibleOnWeb,
-      ean: draft.ean,
-      baseRef: draft.baseRef,
-      price: draft.price,
-      collection: draft.collection,
-      range: draft.range,
+      id: product.id, name: product.name, sku: productSku,
+      description: draft.description, status: draft.status,
+      visibleOnWeb: draft.visibleOnWeb, ean: draft.ean, baseRef: draft.baseRef,
+      price: draft.price, collection: draft.collection, range: draft.range,
       images: images.map(image => ({ url: image.url, alt: image.alt })),
       attachments: attachments.map((attachment: any) => ({
-        name: normalizeAttachmentName(attachment),
+        name: cleanText(attachment.name || attachment.fileName || 'Documento'),
         url: attachment.downloadUrl || attachment.url,
         type: attachment.type,
       })),
@@ -722,7 +319,6 @@ export function ProductModal({
         label: cleanText(categoryLabelMap[categoryId] || categoryId),
       })),
     };
-
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -736,558 +332,67 @@ export function ProductModal({
 
   const StatusIcon = productStatus.icon;
 
-  const contentPanel = (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <section className="space-y-4 border-r border-slate-200 bg-slate-50 px-5 py-5">
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Imágenes</p>
-            <button
-              type="button"
-              onClick={onAddImage}
-              className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
-            >
-              + Añadir
-            </button>
-          </div>
-
-          <div className="relative overflow-hidden rounded-[22px] border border-slate-100 bg-slate-50">
-            <div className="group/image relative flex min-h-[500px] aspect-[4/3] items-center justify-center bg-gradient-to-b from-white to-slate-50 p-3">
-              <img
-                src={currentImageUrl}
-                alt={productName}
-                className="max-h-full max-w-full object-contain"
-                onError={event => {
-                  (event.target as HTMLImageElement).src = fallbackImage(productName);
-                }}
-              />
-
-              <button
-                type="button"
-                onClick={() => void triggerDownload(currentImage?.downloadUrl || currentImage?.url, currentImageFileName)}
-                className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-700 opacity-0 shadow-sm transition hover:bg-white group-hover/image:opacity-100"
-                aria-label="Descargar imagen"
-              >
-                <Download className="h-3.5 w-3.5" />
-              </button>
-
-              {imageSet.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentImageIndex(prev => (prev - 1 + imageSet.length) % imageSet.length)}
-                    className="absolute left-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
-                    aria-label="Imagen anterior"
-                  >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentImageIndex(prev => (prev + 1) % imageSet.length)}
-                    className="absolute right-4 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-800 opacity-0 shadow-md transition hover:bg-white group-hover/image:opacity-100"
-                    aria-label="Imagen siguiente"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
-                  <div className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-slate-200 bg-white/95 px-3 py-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-600 shadow-sm">
-                    {currentImageIndex + 1} / {imageSet.length}
-                  </div>
-                </>
-              )}
-            </div>
-
-            {imageSet.length > 1 && (
-              <div className="border-t border-slate-100 bg-white p-4">
-                <div className="flex flex-wrap gap-2">
-                  {imageSet.map((image: ProductImage, index: number) => (
-                    <button
-                      type="button"
-                      key={image.id || image.url || index}
-                      onClick={() => setCurrentImageIndex(index)}
-                      className={`flex h-[52px] w-[52px] items-center justify-center overflow-hidden rounded-xl border bg-slate-50 p-1 transition ${
-                        currentImageIndex === index
-                          ? 'border-[color:var(--catalog-accent)] ring-2 ring-[color:var(--catalog-accent-soft)]/70'
-                          : 'border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      <img
-                        src={image.url}
-                        alt={image.alt || `${productName} ${index + 1}`}
-                        className="h-full w-full object-contain"
-                        onError={event => {
-                          (event.target as HTMLImageElement).src = fallbackImage(productName);
-                        }}
-                      />
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={onAddImage}
-                    className="flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-slate-400 transition hover:border-slate-400 hover:text-slate-600"
-                    aria-label="Añadir imagen"
-                  >
-                    <Plus className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {isGroupProduct && variants.length > 1 ? (
-              <div className="mt-2 flex items-center gap-3 rounded-sm border border-gray-200 bg-white px-4 py-2.5 text-xs">
-                <div className="pr-2 text-[11px] uppercase tracking-wide text-gray-400">Acabado</div>
-                <div className="flex items-center gap-2 border-l border-gray-200 pl-3">
-                  {(() => {
-                    const visibleVariants = variants.length > 6 ? variants.slice(0, 5) : variants.slice(0, 6);
-                    const overflowCount = variants.length > 6 ? variants.length - 5 : 0;
-                    return (
-                      <>
-                        {visibleVariants.map((variant: any, index: number) => {
-                          const isActive = activeVariantIndex === index;
-                          const label = getVariantFinishLabel(variant) || cleanText(variant.sku || variant.number || variant.id || `Acabado ${index + 1}`);
-                          const color = getVariantSwatchColor(variant, index);
-                          return (
-                            <button
-                              key={variant.id || variant.number || index}
-                              type="button"
-                              title={label}
-                              onClick={() => {
-                                setActiveVariantIndex(index);
-                                setCurrentImageIndex(0);
-                              }}
-                              className={`h-5 w-5 rounded-sm border border-transparent transition ${
-                                isActive ? 'border-[color:var(--catalog-accent)] ring-1 ring-[color:var(--catalog-accent)]' : ''
-                              }`}
-                              style={{ backgroundColor: color || '#C8C8C8' }}
-                            />
-                          );
-                        })}
-                        {overflowCount > 0 ? (
-                          <span className="rounded-sm bg-gray-100 px-2 py-0.5 text-[11px] text-gray-400">+{overflowCount}</span>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-                <div className="min-w-0 border-l border-gray-200 pl-3 text-sm font-medium text-gray-900">
-                  {cleanText(getVariantFinishLabel(activeVariant) || activeVariant?.sku || '') || '—'}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Documentos</p>
-            <button
-              type="button"
-              onClick={onAddDocument}
-              className="text-xs font-medium text-blue-600 transition hover:text-blue-700"
-            >
-              + Añadir
-            </button>
-          </div>
-
-          {attachments.length > 0 ? (
-            <div className="space-y-3">
-              {attachments.map((attachment: any, index: number) => {
-                const attachmentName = normalizeAttachmentName(attachment);
-                const fileName = resolveFileName(attachment.downloadUrl || attachment.url || '', attachmentName);
-                const actionLabel = String(attachment.type || '').toLowerCase().includes('pdf') || fileName.toLowerCase().endsWith('.pdf')
-                  ? 'Descargar PDF'
-                  : 'Descargar';
-
-                return (
-                  <div
-                    key={attachment.id || attachment.url || index}
-                    className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
-                  >
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#d90429] text-white">
-                      <FileText className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-900">{attachmentName}</p>
-                      <p className="mt-0.5 text-xs uppercase tracking-[0.18em] text-slate-500">
-                        {cleanText(attachment.type || 'Documento')}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void triggerDownload(attachment.downloadUrl || attachment.url, fileName)}
-                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
-                    >
-                      <Download className="h-3.5 w-3.5" />
-                      {actionLabel}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={onAddDocument}
-              className="flex min-h-[120px] w-full flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 text-center transition hover:border-slate-400 hover:bg-slate-100"
-            >
-              <Upload className="mb-3 h-7 w-7 text-slate-400" />
-              <span className="text-sm font-medium text-slate-900">Añadir ficha técnica</span>
-              <span className="mt-1 text-xs text-slate-500">PDF, manuales o documentación</span>
-            </button>
-          )}
-        </div>
-      </section>
-
-      <section className="space-y-4 bg-white px-5 py-5">
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {attributes.length} atributos con valor · {attributeGroups.length} grupos
-              </p>
-            </div>
-          </div>
-
-          {attributeGroups.length > 0 ? (
-            <div className="space-y-4">
-              {attributeGroups.map(group => (
-                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
-                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {group.attributes.map((attr: any) => (
-                      <div
-                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
-                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
-                      >
-                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
-                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
-                        </p>
-                        <div className="mt-2 min-h-[22px]">
-                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              No hay atributos con valor en este producto
-            </div>
-          )}
-        </div>
-
-        {fileAttributes.length > 0 ? (
-          <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Archivos</p>
-                <p className="mt-1 text-xs text-slate-500">{fileAttributes.length} ficheros vinculados</p>
-              </div>
-            </div>
-
-            <div className="grid gap-3 xl:grid-cols-2">
-              {fileAttributes.map((attr: any, index: number) => {
-                const href = getAttributeHref(attr);
-                const label = getAttributeLabel(attr);
-                const title = getAttributeFileName(attr, href);
-                const kind = getAttributeFileKind(attr, href);
-                const isDownloadable = /\.(pdf|dwg|zip|png|jpe?g|webp|gif|svg)$/i.test(href);
-
-                return (
-                  <div
-                    key={attr.definitionId || attr.name || `${label}-${index}`}
-                    className="flex h-full min-h-[112px] flex-col justify-between rounded-2xl border border-slate-200 bg-slate-50 p-4 transition hover:border-[color:var(--catalog-accent)]/30 hover:bg-white"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[color:var(--catalog-accent-soft)] text-[color:var(--catalog-accent)]">
-                        <FileText className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-medium text-slate-900">{label}</p>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            {kind}
-                          </span>
-                        </div>
-                        <p className="mt-1 truncate text-xs text-slate-500">{title}</p>
-                      </div>
-                    </div>
-
-                    {href ? (
-                      <div className="mt-3 flex items-center gap-2">
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Abrir
-                        </a>
-                        {isDownloadable ? (
-                          <button
-                            type="button"
-                            onClick={() => void triggerDownload(href, title)}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            Descargar
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : (
-                      <span className="mt-3 inline-flex w-fit rounded-full bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-500">
-                        Sin enlace
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-      </section>
-    </div>
-  );
-  const variantsPanel = (
-    <div className="px-6 py-6">
-      <div className="rounded-[24px] border border-slate-200 bg-white p-5 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-        <div className="mb-4 flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-slate-900">{variants.length} acabados</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => onAddVariant?.()}
-            className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
-          >
-            <Plus className="h-4 w-4" />
-            Añadir acabado
-          </button>
-        </div>
-
-        {variants.length > 0 ? (
-          <div className="overflow-hidden rounded-2xl border border-gray-100">
-            <table className="w-full text-sm">
-              <thead className="bg-white">
-                <tr className="border-b border-gray-100">
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acabado</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">SKU</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">EAN</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Precio (€)</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Peso (kg)</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Estado</th>
-                  <th className="px-4 pb-2 text-left text-[10px] font-medium uppercase tracking-widest text-gray-400">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {variants.map((variant: any, index: number) => {
-                  const variantSku = cleanText(variant.sku || variant.number || variant.id || '—');
-                  const finishLabel = getVariantFinishLabel(variant) || `Acabado ${index + 1}`;
-                  const finishColor = getVariantSwatchColor(variant, index);
-                  const variantEan = cleanText(
-                    variant.ean ||
-                      variant.EAN ||
-                      variant.attributes?.ean ||
-                      variant.attributes?.EAN ||
-                      variant.attributes?.gtin ||
-                      ''
-                  ).trim();
-                  const variantPriceRaw = variant.price ?? variant.attributes?.price ?? variant.attributes?.precio;
-                  const variantWeightRaw = variant.weight ?? variant.attributes?.weight ?? variant.attributes?.peso;
-                  const variantPrice =
-                    variantPriceRaw === null || variantPriceRaw === undefined || String(variantPriceRaw).trim() === ''
-                      ? '—'
-                      : formatValue(variantPriceRaw);
-                  const variantWeight =
-                    variantWeightRaw === null || variantWeightRaw === undefined || String(variantWeightRaw).trim() === ''
-                      ? '—'
-                      : formatValue(variantWeightRaw);
-                  const variantStatus = STATUS_META[getProductStatus(variant as Product)];
-                  const isCurrentVariant = activeVariantId === variant.id;
-
-                  return (
-                    <tr
-                      key={variant.id || variantSku || index}
-                      className={`border-b border-gray-50 transition-colors hover:bg-gray-50 ${isCurrentVariant ? 'bg-blue-50' : 'bg-white'}`}
-                    >
-                      <td className="px-4 py-3 align-middle">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="h-3.5 w-3.5 rounded-full border border-white shadow-sm ring-1 ring-slate-200"
-                            style={{ backgroundColor: finishColor || 'var(--catalog-accent)' }}
-                          />
-                          <span className="text-sm font-medium text-slate-900">{finishLabel}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <button
-                          type="button"
-                          onClick={() => void copySkuToClipboard(variantSku)}
-                          className="group inline-flex items-center gap-1 font-mono text-sm text-slate-700 transition hover:text-slate-900"
-                          title={copiedSku === variantSku ? 'Copiado' : 'Copiar SKU'}
-                        >
-                          <span>{variantSku}</span>
-                          <Copy className="h-3.5 w-3.5 opacity-0 transition group-hover:opacity-100" />
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantEan || '—'}</td>
-                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantPrice}</td>
-                      <td className="px-4 py-3 align-middle text-sm text-slate-700">{variantWeight}</td>
-                      <td className="px-4 py-3 align-middle">
-                        <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${variantStatus.className}`}>
-                          <variantStatus.icon className="h-3.5 w-3.5" />
-                          {variantStatus.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 align-middle">
-                        <button
-                          type="button"
-                          onClick={() => onNavigateBreadcrumb?.('product', variant.id)}
-                          className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          Abrir
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="flex min-h-[260px] flex-col items-center justify-center rounded-3xl border border-dashed border-slate-300 bg-slate-50 text-center">
-            <Layers className="h-10 w-10 text-slate-400" />
-            <p className="mt-4 text-sm font-medium text-slate-900">Sin acabados registrados</p>
-            <button
-              type="button"
-              onClick={() => onAddVariant?.()}
-              className="mt-4 inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
-            >
-              <Plus className="h-4 w-4" />
-            Añadir acabado
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-
-  const placeholderPanel = (
-    <div className="p-6">
-      <PlaceholderPanel />
-    </div>
-  );
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/55 p-3 sm:p-6" onClick={onClose}>
       <div
         className="mx-auto flex h-full w-full flex-col overflow-hidden rounded-[28px] bg-white shadow-[0_30px_80px_rgba(15,23,42,0.28)]"
         onClick={event => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="product-modal-title"
       >
+        {/* Header: breadcrumb + navigation */}
         <div className="border-b border-slate-200 bg-white px-5 py-3 sm:px-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <nav className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-500">
-              <button
-                type="button"
-                onClick={() => onNavigateBreadcrumb?.('catalog')}
-                className="truncate font-medium text-slate-700 transition hover:text-slate-900"
-              >
+              <button type="button" onClick={() => onNavigateBreadcrumb?.('catalog')} className="truncate font-medium text-slate-700 transition hover:text-slate-900">
                 Catálogo
               </button>
               <ChevronRight className="h-4 w-4 text-slate-300" />
-              <button
-                type="button"
-                onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])}
-                className="truncate font-medium text-slate-700 transition hover:text-slate-900"
-              >
+              <button type="button" onClick={() => onNavigateBreadcrumb?.('category', categoryIds[0])} className="truncate font-medium text-slate-700 transition hover:text-slate-900">
                 {primaryCategory || 'Sin categoría'}
               </button>
               {isVariantProduct && parentProduct ? (
                 <>
                   <ChevronRight className="h-4 w-4 text-slate-300" />
-                  <button
-                    type="button"
-                    onClick={() => onNavigateBreadcrumb?.('product', parentProduct?.id)}
-                    className="truncate font-medium text-slate-700 transition hover:text-slate-900"
-                  >
+                  <button type="button" onClick={() => onNavigateBreadcrumb?.('product', parentProduct?.id)} className="truncate font-medium text-slate-700 transition hover:text-slate-900">
                     {parentGroupLabel}
                   </button>
                   <ChevronRight className="h-4 w-4 text-slate-300" />
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('variantes')}
-                    className="truncate font-medium text-slate-900 transition hover:text-slate-700"
-                  >
+                  <button type="button" onClick={() => setActiveTab('variantes')} className="truncate font-medium text-slate-900 transition hover:text-slate-700">
                     {variantLabel || productName}
                   </button>
                 </>
               ) : (
                 <>
                   <ChevronRight className="h-4 w-4 text-slate-300" />
-                  <button
-                    type="button"
-                    onClick={() => confirmDiscardChanges(() => onNavigateBreadcrumb?.('product', product.id))}
-                    className="truncate font-medium text-slate-900 transition hover:text-slate-700"
-                  >
+                  <button type="button" onClick={() => confirmDiscardChanges(() => onNavigateBreadcrumb?.('product', product.id))} className="truncate font-medium text-slate-900 transition hover:text-slate-700" title={productName}>
                     {productName}
                   </button>
                 </>
               )}
             </nav>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (onPrev) confirmDiscardChanges(onPrev);
-                }}
-                disabled={!onPrev}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >
+            <div className="flex items-center gap-4">
+              <button type="button" onClick={() => { if (onPrev) confirmDiscardChanges(onPrev); }} disabled={!onPrev} aria-label="Producto anterior" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
                 <ChevronLeft className="h-3.5 w-3.5" />
                 Anterior
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (onNext) confirmDiscardChanges(onNext);
-                }}
-                disabled={!onNext}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-              >
+              <button type="button" onClick={() => { if (onNext) confirmDiscardChanges(onNext); }} disabled={!onNext} aria-label="Producto siguiente" className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
                 Siguiente
                 <ChevronRight className="h-3.5 w-3.5" />
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  cycleLocale();
-                }}
-                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
+              <button type="button" onClick={cycleLocale} className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50">
                 <Languages className="h-3.5 w-3.5" />
                 {effectiveLocale}
               </button>
-              <button
-                type="button"
-                onClick={() => confirmDiscardChanges(onClose)}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
-                aria-label="Cerrar ficha"
-              >
+              <button type="button" onClick={() => confirmDiscardChanges(onClose)} className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white p-2 text-slate-700 transition hover:bg-slate-50" aria-label="Cerrar ficha">
                 <X className="h-5 w-5" />
               </button>
             </div>
           </div>
         </div>
 
+        {/* Subheader: product info + tabs + toolbar */}
         <div className="border-b border-slate-200 bg-white px-6 py-5">
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1295,58 +400,45 @@ export function ProductModal({
                 {isVariantProduct && parentProduct ? (
                   <button
                     type="button"
-                    onClick={() =>
-                      confirmDiscardChanges(() => {
-                        onNavigateBreadcrumb?.('product', parentProduct.id);
-                        setActiveTab('variantes');
-                      })
-                    }
+                    onClick={() => confirmDiscardChanges(() => { onNavigateBreadcrumb?.('product', parentProduct.id); setActiveTab('variantes'); })}
                     className="mb-2 inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
                   >
                     <ChevronLeft className="h-3.5 w-3.5" />
                     Ver todos los acabados
                   </button>
                 ) : null}
-                <h1 className="max-w-4xl truncate text-lg font-medium tracking-[-0.02em] text-slate-900 sm:text-xl">
+                <h1 id="product-modal-title" title={productName} className="max-w-4xl line-clamp-2 text-lg font-medium leading-tight tracking-[-0.02em] text-slate-900 sm:text-xl">
                   {productName}
                 </h1>
                 <p className="mt-1 text-sm text-slate-500">
                   SKU representativo: <span className="font-medium text-slate-700">{productSku}</span> · ID:
-                  <button
-                    type="button"
-                    onClick={() => void navigator.clipboard.writeText(productId)}
-                    className="ml-1 inline-flex items-center gap-1 font-mono text-slate-600 transition hover:text-slate-900"
-                    title={productId}
-                  >
+                  <button type="button" onClick={() => void navigator.clipboard.writeText(productId)} className="ml-1 inline-flex items-center gap-1 font-mono text-slate-600 transition hover:text-slate-900" title={productId}>
                     {shortId}
                     <Copy className="h-3.5 w-3.5" />
                   </button>
                 </p>
               </div>
-
               <div className="flex flex-col items-start gap-2 sm:items-end">
-              {canEditStatus ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const currentIndex = STATUS_ORDER.indexOf(draft.status);
-                    const nextStatus = STATUS_ORDER[(currentIndex + 1) % STATUS_ORDER.length] || 'pending';
-                    setDraft(previous => ({ ...previous, status: nextStatus }));
-                  }}
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${productStatus.className}`}
-                >
-                  <StatusIcon className="h-3.5 w-3.5" />
-                  {productStatus.label}
-                </button>
-              ) : (
-                <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${productStatus.className}`}>
-                  <StatusIcon className="h-3.5 w-3.5" />
-                  {productStatus.label}
-                </span>
-              )}
-                <p className="text-xs text-slate-500">
-                  Actualizado {lastUpdate || '—'} · {updatedBy}
-                </p>
+                {canEditStatus ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentIndex = STATUS_ORDER.indexOf(draft.status as ProductStatus);
+                      const nextStatus = STATUS_ORDER[(currentIndex + 1) % STATUS_ORDER.length] || 'pending';
+                      setDraft(previous => ({ ...previous, status: nextStatus }));
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold transition ${productStatus.className}`}
+                  >
+                    <StatusIcon className="h-3.5 w-3.5" />
+                    {productStatus.label}
+                  </button>
+                ) : (
+                  <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold ${productStatus.className}`}>
+                    <StatusIcon className="h-3.5 w-3.5" />
+                    {productStatus.label}
+                  </span>
+                )}
+                <p className="text-xs text-slate-500">Actualizado {lastUpdate || '—'} · {updatedBy}</p>
               </div>
             </div>
 
@@ -1355,8 +447,6 @@ export function ProductModal({
                 {[
                   { id: 'contenido', label: 'Contenido' },
                   ...(showVariantsTab ? [{ id: 'variantes', label: 'Variantes', count: variants.length }] : []),
-                  ...(showHistoryTab ? [{ id: 'historial', label: 'Historial' }] : []),
-                  ...(showChannelsTab ? [{ id: 'canales', label: 'Canales' }] : []),
                 ].map(tab => {
                   const isActive = activeTab === tab.id;
                   return (
@@ -1364,11 +454,7 @@ export function ProductModal({
                       key={tab.id}
                       type="button"
                       onClick={() => setActiveTab(tab.id as SheetTab)}
-                      className={`inline-flex items-center gap-2 border-b-2 px-1.5 py-2 text-sm font-medium transition ${
-                        isActive
-                          ? 'border-slate-800 text-slate-900'
-                          : 'border-transparent text-slate-400 hover:text-slate-600'
-                      }`}
+                      className={`inline-flex items-center gap-2 border-b-2 px-1.5 py-2 text-sm font-medium transition ${isActive ? 'border-slate-800 text-slate-900' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
                     >
                       <span>{tab.label}</span>
                       {typeof tab.count === 'number' ? (
@@ -1378,34 +464,17 @@ export function ProductModal({
                   );
                 })}
               </div>
-
               <div className="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (currentImageUrl) window.open(currentImageUrl, '_blank', 'noopener,noreferrer');
-                  }}
-                  className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
-                >
+                <button type="button" onClick={() => { if (currentImageUrl) window.open(currentImageUrl, '_blank', 'noopener,noreferrer'); }} className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50">
                   <Eye className="h-4 w-4" />
                   Ver imagen principal
                 </button>
-                <button
-                  type="button"
-                  onClick={exportPayload}
-                  className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
-                >
+                <button type="button" onClick={exportPayload} className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50">
                   <Download className="h-4 w-4" />
                   Exportar
                 </button>
                 {canSave ? (
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-white transition ${
-                      saveState === 'saved' ? 'bg-green-800 hover:bg-green-700' : 'bg-slate-800 hover:bg-slate-700'
-                    }`}
-                  >
+                  <button type="button" onClick={handleSave} className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-white transition ${saveState === 'saved' ? 'bg-green-800 hover:bg-green-700' : 'bg-slate-800 hover:bg-slate-700'}`}>
                     <Check className="h-4 w-4" />
                     {saveState === 'saved' ? 'Guardado' : 'Guardar'}
                   </button>
@@ -1415,12 +484,44 @@ export function ProductModal({
           </div>
         </div>
 
+        {/* Content area */}
         <div className="flex-1 overflow-y-auto bg-[#f3f6fb]">
-          {activeTab === 'contenido'
-            ? contentPanel
-            : activeTab === 'variantes' && showVariantsTab
-              ? variantsPanel
-              : placeholderPanel}
+          {activeTab === 'contenido' ? (
+            <ProductContentTab
+              productName={productName}
+              imageSet={imageSet}
+              currentImageIndex={currentImageIndex}
+              setCurrentImageIndex={setCurrentImageIndex}
+              currentImageUrl={currentImageUrl}
+              currentImageFileName={currentImageFileName}
+              currentImage={currentImage}
+              onAddImage={onAddImage}
+              isGroupProduct={isGroupProduct}
+              variants={variants}
+              activeVariantIndex={activeVariantIndex}
+              setActiveVariantIndex={setActiveVariantIndex}
+              attachments={attachments}
+              onAddDocument={onAddDocument}
+              attributes={attributes}
+              attributeGroups={attributeGroups}
+              fileAttributes={fileAttributes}
+            />
+          ) : activeTab === 'variantes' && showVariantsTab ? (
+            <ProductVariantsPanel
+              variants={variants}
+              activeVariantId={activeVariantId}
+              copiedSku={copiedSku}
+              onCopySku={copySkuToClipboard}
+              onAddVariant={onAddVariant}
+              onNavigateBreadcrumb={onNavigateBreadcrumb}
+            />
+          ) : (
+            <div className="p-6">
+              <div className="flex min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+                Sección en desarrollo
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
