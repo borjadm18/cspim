@@ -61,6 +61,7 @@ export default function SuperadminPage() {
   const [userRole, setUserRole] = useState<Role>('content_manager');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [warmingUp, setWarmingUp] = useState<Set<string>>(new Set());
 
   const tenantUserCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -149,6 +150,41 @@ export default function SuperadminPage() {
       return;
     }
     setTenants(previous => previous.filter(tenant => tenant.id !== tenantId));
+  };
+
+  const handleWarmUp = async (tenantSlug: string) => {
+    setWarmingUp(prev => new Set(prev).add(tenantSlug));
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setError('No active session');
+        return;
+      }
+
+      const res = await fetch(
+        `/api/catalog?tenant=${encodeURIComponent(tenantSlug)}&refresh=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(`Warm-up failed: ${(body as { error?: string }).error ?? res.status}`);
+      } else {
+        setSuccess(`Caché calentada para ${tenantSlug}`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Warm-up failed');
+    } finally {
+      setWarmingUp(prev => {
+        const next = new Set(prev);
+        next.delete(tenantSlug);
+        return next;
+      });
+    }
   };
 
   const handleCreateUser = async () => {
@@ -275,6 +311,14 @@ export default function SuperadminPage() {
                             className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-red-600 transition hover:bg-red-50"
                           >
                             Eliminar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleWarmUp(tenant.slug)}
+                            disabled={warmingUp.has(tenant.slug)}
+                            className="rounded-full border border-blue-200 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] text-blue-600 transition hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {warmingUp.has(tenant.slug) ? 'Calentando…' : 'Calentar caché'}
                           </button>
                         </div>
                       </td>
