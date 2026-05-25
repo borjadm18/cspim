@@ -85,9 +85,15 @@ This eliminates the cold start on first demo or first real use of a new tenant.
 ### `src/pages/SuperadminPage.tsx`
 
 - Add "Calentar caché" button next to each tenant row
-- Button calls `GET /api/catalog?tenant={tenantId}&refresh=1` with the user's auth token
+- Button calls `GET /api/catalog?tenant={tenantId}&refresh=1` with the Supabase session JWT in the `Authorization: Bearer {jwt}` header
 - Shows loading spinner while in progress; shows success/error toast on completion
 - Only visible to `superadmin` role
+
+### `api/catalog.ts` — `hasRefreshAccess()` extension
+
+- Currently only accepts `CRON_SECRET`. Extend to also accept a valid Supabase JWT belonging to a user with `superadmin` role.
+- Check order: CRON_SECRET first (fast path), then Supabase JWT validation (calls `supabase.auth.getUser(token)` and checks `profile.role === 'superadmin'`).
+- This avoids exposing CRON_SECRET to the browser.
 
 ### `SETUP.md` (new file, project root)
 
