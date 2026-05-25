@@ -31,6 +31,17 @@ export type BrandOption = {
   count: number;
 };
 
+export type FacetOption = {
+  id: string;
+  label: string;
+  count: number;
+};
+
+export type PriceRange = {
+  min: number;
+  max: number;
+};
+
 export type MediaFilter = 'all' | 'with-assets' | 'without-assets' | 'images-only' | 'documents-only' | 'mixed';
 
 export type QuickFilter = 'all' | 'images' | 'attachments' | 'categories' | 'assets';
@@ -41,6 +52,7 @@ export type CatalogSettings = {
   density: 'comfortable' | 'compact';
   logoUrl?: string;
   paletteId: string;
+  customAccentHex?: string;
 };
 
 export type SavedViewSnapshot = {
@@ -48,6 +60,14 @@ export type SavedViewSnapshot = {
   searchTerm: string;
   selectedName: string;
   selectedNumber: string;
+  selectedCollection: string;
+  selectedRange: string;
+  selectedPriceMin: string;
+  selectedPriceMax: string;
+  selectedEan: string;
+  selectedFlow: string;
+  selectedFinish: string;
+  selectedAttributeQuery: string;
   selectedBrand: string;
   selectedCategory: string;
   selectedType: string;
@@ -74,6 +94,62 @@ export type TenantOption = {
 };
 
 export type CatalogAccessMode = 'admin' | 'client';
+
+export type CatalogQueryParams = {
+  tenantId: string;
+  page: number;
+  pageSize: number;
+  sortBy: CatalogSortKey;
+  searchTerm: string;
+  selectedName: string;
+  selectedNumber: string;
+  selectedCollection: string;
+  selectedRange: string;
+  selectedPriceMin: string;
+  selectedPriceMax: string;
+  selectedEan: string;
+  selectedFlow: string;
+  selectedFinish: string;
+  selectedAttributeQuery: string;
+  selectedBrand: string;
+  selectedCategory: string;
+  selectedType: string;
+  selectedStatus: string;
+  selectedMediaFilter: MediaFilter;
+  selectedQuickFilter: QuickFilter;
+};
+
+export type CatalogPageMeta = {
+  currentPage: number;
+  pageSize: number;
+  totalPages: number;
+  totalCatalogCount: number;
+  filteredGroupCount: number;
+  totalRawProductCount: number;
+  categoryLabelMap: Record<string, string>;
+  brandOptions: BrandOption[];
+  rangeOptions: FacetOption[];
+  flowOptions: FacetOption[];
+  finishOptions: FacetOption[];
+  priceRange: PriceRange;
+  categoryTree: CategoryTreeNode[];
+  typeOptions: TypeOption[];
+  statusOptions: StatusOption[];
+  imageCount: number;
+  attachmentCount: number;
+  assetCount: number;
+  withImagesCount: number;
+  withDocumentsCount: number;
+  mixedMediaCount: number;
+  cacheAgeMs?: number;
+  stale?: boolean;
+  slim?: boolean;
+};
+
+export type CatalogPageResponse = {
+  products: Product[];
+  meta: CatalogPageMeta;
+};
 
 export type CatalogState = {
   products: Product[];
@@ -106,4 +182,5 @@ export type CatalogState = {
   settings: CatalogSettings;
   selectedTenantId: string;
   tenantOptions: TenantOption[];
+  selectedAttributeQuery: string;
 };
