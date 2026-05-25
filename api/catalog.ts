@@ -1,11 +1,13 @@
 /// <reference types="node" />
 import { createClient } from '@supabase/supabase-js';
-import type { CatalogPageMeta, CatalogQueryParams, CatalogSortKey } from '../src/features/catalog/model/catalogTypes';
+import type { CatalogPageMeta, CatalogQueryParams, CatalogSortKey } from '../src/features/catalog/model/catalogTypes.js';
 import {
   buildBrandOptions,
   buildCategoryLabelMap,
   buildCategoryOptions,
   buildCategoryTree,
+  buildFacetOptions,
+  buildPriceRange,
   buildStatusOptions,
   buildTypeOptions,
   cleanText,
@@ -18,8 +20,8 @@ import {
   isTestProduct,
   normalizeKey,
   resolveCategorySelectionIds,
-} from '../src/features/catalog/selectors/catalogSelectors.js';
-import type { Product } from '../src/features/catalog/api/productService';
+} from './_lib/catalogUtils.js';
+import type { Product } from '../src/features/catalog/api/productService.js';
 import { requireAuth } from './_lib/auth.js';
 import { checkRateLimit, getClientIp } from './_lib/rateLimit.js';
 
@@ -64,17 +66,34 @@ type CatalogCacheEntry = {
   fetchedAt: number;
 };
 
+type IndexedAttributeRecord = {
+  definitionId: string;
+  definitionName: string;
+  name: string;
+  group: string;
+  dataType: string;
+  value: string;
+  displayValue: string;
+  rawValue: unknown;
+};
+
 const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, Apikey',
 };
 
-const getCorsHeaders = (request: Request | { headers?: Record<string, string | string[] | undefined>; url?: string }) => {
+type HeaderRecord = Record<string, string | string[] | undefined>;
+type HeaderGetter = { get: (name: string) => string | null };
+
+const isHeaderGetter = (value: unknown): value is HeaderGetter =>
+  typeof value === 'object' && value !== null && typeof (value as HeaderGetter).get === 'function';
+
+const getCorsHeaders = (request: Request | { headers?: HeaderRecord; url?: string }) => {
   const headerSource =
-    request && typeof request === 'object' && 'headers' in request ? (request as { headers?: Record<string, string | string[] | undefined> }).headers : undefined;
+    request && typeof request === 'object' && 'headers' in request ? (request as { headers?: HeaderRecord }).headers : undefined;
   const origin =
-    typeof (headerSource as { get?: (name: string) => string | null } | undefined)?.get === 'function'
-      ? (headerSource as { get: (name: string) => string | null }).get('origin')
+    isHeaderGetter(headerSource)
+      ? headerSource.get('origin')
       : Array.isArray(headerSource?.origin)
         ? headerSource.origin[0]
         : headerSource?.origin;
@@ -110,11 +129,12 @@ const SUPABASE_CACHE_TTL_MS = 30 * 60 * 1000;
 const REFRESH_GRACE_MS = 2 * 60 * 60 * 1000;
 const BLUESTONE_TIMEOUT_MS = 20_000;
 const BLUESTONE_ATTEMPTS = 4;
-const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
+const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 1;
 
 const definitionCache = new Map<string, Promise<Map<string, DefinitionRecord>>>();
 const catalogCache = new Map<string, CatalogCacheEntry>();
 const refreshInFlight = new Map<string, Promise<CatalogCacheEntry>>();
+const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 let supabaseAdminClient: ReturnType<typeof createClient> | null | undefined;
 
@@ -176,7 +196,26 @@ const sortCatalogProducts = (products: Product[], sortBy: CatalogSortKey) => {
   }
 };
 
-const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = BLUESTONE_ATTEMPTS, timeoutMs = BLUESTONE_TIMEOUT_MS) => {
+const getAuthHeaderValue = (request: { headers?: Record<string, string | string[] | undefined> }) => {
+  const authorization = request.headers?.authorization;
+  return Array.isArray(authorization) ? authorization[0] : authorization;
+};
+
+const hasRefreshAccess = (request: { headers?: Record<string, string | string[] | undefined> }) => {
+  const secret = process.env.CRON_SECRET || process.env.CATALOG_REFRESH_SECRET;
+  if (!secret) return false;
+
+  const authHeader = getAuthHeaderValue(request);
+  if (authHeader?.startsWith('Bearer ')) {
+    return authHeader.slice(7) === secret;
+  }
+
+  const explicitHeader = request.headers?.['x-catalog-refresh-secret'];
+  const provided = Array.isArray(explicitHeader) ? explicitHeader[0] : explicitHeader;
+  return provided === secret;
+};
+
+const fetchWithRetry = async (input: string | URL, init: RequestInit, attempts = BLUESTONE_ATTEMPTS, timeoutMs = BLUESTONE_TIMEOUT_MS) => {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -257,6 +296,13 @@ const TENANT_MAP: TenantConfigMap = (() => {
 const getTenantConfig = (tenantId: string): TenantConfig | null =>
   TENANT_MAP[tenantId] || TENANT_MAP[DEFAULT_TENANT] || null;
 
+const getConfiguredTenantIds = () => {
+  const ids = Object.keys(TENANT_MAP);
+  return ids.length ? ids : [DEFAULT_TENANT];
+};
+
+const buildTenantCacheKey = (tenant: TenantConfig) => `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
+
 const getBaseUrl = (env: TenantConfig['env']) =>
   env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com';
 
@@ -311,6 +357,28 @@ const formatAttributeValue = (value: unknown): string => {
   if (typeof value === 'boolean') return value ? 'Sí' : 'No';
   if (typeof value === 'number') return String(value);
   return '';
+};
+
+const isOpaqueIdentifier = (value: string) => /^[a-f0-9]{20,}$/i.test(value) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(value);
+
+const isSearchNoise = (value: string) => {
+  const normalized = cleanText(value).trim();
+  if (!normalized) return true;
+  if (/^https?:\/\//i.test(normalized)) return true;
+  if (isOpaqueIdentifier(normalized)) return true;
+  if (/^(true|false|sí|si|no)$/i.test(normalized)) return true;
+  return false;
+};
+
+const normalizeCatalogState = (value: unknown) => {
+  const normalized = normalizeKey(value);
+  if (!normalized) return '';
+  if (normalized.includes('playground') || normalized.includes('sandbox') || normalized.includes('test')) return 'draft';
+  if (normalized.includes('draft') || normalized.includes('borrador')) return 'draft';
+  if (normalized.includes('publish') || normalized.includes('published') || normalized.includes('public')) return 'published';
+  if (normalized.includes('review') || normalized.includes('pending') || normalized.includes('to be published')) return 'to-be-published';
+  if (normalized.includes('archive') || normalized.includes('archiv')) return 'archived';
+  return normalized;
 };
 
 const normalizeProductBatch = (data: unknown) => {
@@ -400,7 +468,7 @@ const fetchDefinitions = async (tenant: TenantConfig, token: string) => {
         throw new Error(`Bluestone definitions request failed (${response.status}): ${await response.text()}`);
       }
 
-      const payload = await response.json();
+      const payload = (await response.json()) as { data?: unknown[] };
       const batch = Array.isArray(payload?.data) ? payload.data : [];
       if (!batch.length) break;
 
@@ -423,6 +491,12 @@ const fetchDefinitions = async (tenant: TenantConfig, token: string) => {
 };
 
 const getAccessToken = async (tenant: TenantConfig): Promise<string> => {
+  const cacheKey = buildTenantCacheKey(tenant);
+  const cached = accessTokenCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiresAt) {
+    return cached.token;
+  }
+
   const response = await fetchWithRetry(getTokenUrl(tenant.env), {
     method: 'POST',
     headers: {
@@ -444,6 +518,11 @@ const getAccessToken = async (tenant: TenantConfig): Promise<string> => {
   if (!data.access_token) {
     throw new Error('Bluestone token response did not include an access token');
   }
+
+  accessTokenCache.set(cacheKey, {
+    token: data.access_token,
+    expiresAt: Date.now() + 55 * 60 * 1000,
+  });
 
   return data.access_token;
 };
@@ -486,6 +565,70 @@ const fetchAssetDownloads = async (tenant: TenantConfig, token: string, assetIds
   });
 
   return downloads;
+};
+
+const normalizeMediaItem = (
+  media: unknown
+): { kind: 'image'; item: { id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean } } | {
+  kind: 'attachment';
+  item: { id: string; name: string; url: string; downloadUrl: string; type: string };
+} | null => {
+  if (!media || typeof media !== 'object') return null;
+  const record = media as Record<string, unknown>;
+  const contentType = cleanText(record.contentType).toLowerCase();
+  const url = cleanText(record.previewUri || record.downloadUri || record.url);
+  const downloadUrl = cleanText(record.downloadUri || record.previewUri || record.url);
+  if (!url && !downloadUrl) return null;
+
+  if (contentType.includes('image/')) {
+    return {
+      kind: 'image',
+      item: {
+        id: cleanText(record.id || record.number || record.assetId),
+        url: url || downloadUrl,
+        downloadUrl: downloadUrl || url,
+        alt: cleanText(record.fileName || record.name || record.title || 'Imagen'),
+        isPrimary: Boolean(record.isPrimary),
+      },
+    };
+  }
+
+  return {
+    kind: 'attachment',
+    item: {
+      id: cleanText(record.id || record.number || record.assetId),
+      name: cleanText(record.fileName || record.name || record.title || 'Documento'),
+      url: downloadUrl || url,
+      downloadUrl: downloadUrl || url,
+      type: cleanText(record.contentType || 'application/octet-stream') || 'application/octet-stream',
+    },
+  };
+};
+
+const extractEmbeddedMedia = (product: Record<string, unknown>) => {
+  const images: Array<{ id: string; url: string; downloadUrl: string; alt: string; isPrimary?: boolean }> = [];
+  const attachments: Array<{ id: string; name: string; url: string; downloadUrl: string; type: string }> = [];
+  const media = Array.isArray(product.media) ? product.media : [];
+
+  for (const mediaItem of media) {
+    const normalized = normalizeMediaItem(mediaItem);
+    if (!normalized) continue;
+    if (normalized.kind === 'image') {
+      images.push(normalized.item);
+      continue;
+    }
+    attachments.push(normalized.item);
+  }
+
+  images.sort((a, b) => scoreImageByFileName(b) - scoreImageByFileName(a));
+  if (images.length > 0) images[0]!.isPrimary = true;
+
+  return {
+    images,
+    attachments,
+    hasImage: images.length > 0,
+    hasDocument: attachments.length > 0,
+  };
 };
 
 // TRES Grifería standard image slots — only these two are shown, in this order.
@@ -552,6 +695,25 @@ const buildProductMedia = (
   return { images, attachments };
 };
 
+const summarizeAttributes = (attributes: unknown[]): IndexedAttributeRecord[] =>
+  attributes.map(attribute => {
+    const source = typeof attribute === 'object' && attribute !== null ? (attribute as Record<string, unknown>) : {};
+    const rawValue = source.value ?? source.values;
+    const displayValue = formatAttributeValue(rawValue);
+    const preferredName = cleanText(source.definitionName || source.name || source.label || '');
+    const fallbackName = cleanText(source.definitionId || 'Atributo');
+    return {
+      definitionId: cleanText(source.definitionId || ''),
+      definitionName: preferredName || fallbackName,
+      name: preferredName || fallbackName,
+      group: cleanText(source.groupName || source.group || ''),
+      dataType: cleanText(source.dataType || ''),
+      value: displayValue,
+      displayValue,
+      rawValue,
+    };
+  });
+
 const enrichAttributes = (attributes: unknown[], definitionMap: Map<string, DefinitionRecord>) =>
   attributes.map(attribute => {
     const source = typeof attribute === 'object' && attribute !== null ? (attribute as Record<string, unknown>) : {};
@@ -577,19 +739,67 @@ const buildAttributeSearchText = (attributes: Array<Record<string, unknown>>) =>
   attributes
     .map(attribute =>
       [
-        attribute.definitionName,
-        attribute.name,
+        isSearchNoise(cleanText(attribute.definitionName).trim()) ? '' : attribute.definitionName,
+        isSearchNoise(cleanText(attribute.name).trim()) ? '' : attribute.name,
         attribute.group,
         attribute.dataType,
-        attribute.displayValue,
-        attribute.value,
+        isSearchNoise(cleanText(attribute.displayValue).trim()) ? '' : attribute.displayValue,
+        isSearchNoise(cleanText(attribute.value).trim()) ? '' : attribute.value,
       ]
         .map(value => cleanText(value).trim())
         .filter(Boolean)
         .join(' ')
     )
     .filter(Boolean)
-    .join(' ');
+    .join(' ')
+    .slice(0, 320);
+
+const ATTRIBUTE_KEYSETS = {
+  collection: ['collection', 'coleccion', 'colección'],
+  range: ['range', 'gama'],
+  ean: ['ean', 'gtin', 'codigoean', 'códigoean', 'codigo ean', 'código ean'],
+  flowRate: ['692d69b4f8de9bb8df7818d5', 'caudal', 'flow rate', 'flowrate', 'l/min', 'l min'],
+  finish: ['692962777118d05218bb7788', 'finish', 'acabado', 'acabados tres', 'color'],
+  price: ['price', 'precio', 'pvp'],
+  weight: ['weight', 'peso'],
+} as const;
+
+const matchesAttributeKey = (attribute: Record<string, unknown>, keys: readonly string[]) => {
+  const haystack = [
+    attribute.definitionName,
+    attribute.name,
+    attribute.definitionId,
+    attribute.label,
+  ]
+    .map(value => normalizeKey(value))
+    .filter(Boolean);
+
+  return haystack.some(value => keys.some(key => value === normalizeKey(key) || value.includes(normalizeKey(key))));
+};
+
+const findAttributeRecord = (attributes: Array<Record<string, unknown>>, keys: readonly string[]) =>
+  attributes.find(attribute => matchesAttributeKey(attribute, keys));
+
+const parseNumberish = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const match = cleanText(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const parsed = Number.parseFloat(match[0]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const getAttributeText = (attributes: Array<Record<string, unknown>>, keys: readonly string[]) =>
+  cleanText(
+    findAttributeRecord(attributes, keys)?.displayValue ??
+      findAttributeRecord(attributes, keys)?.value ??
+      ''
+  ).trim();
+
+const getAttributeNumber = (attributes: Array<Record<string, unknown>>, keys: readonly string[]) =>
+  parseNumberish(
+    findAttributeRecord(attributes, keys)?.displayValue ??
+      findAttributeRecord(attributes, keys)?.value
+  );
 
 const normalizeCatalogProduct = (
   product: Record<string, unknown>,
@@ -611,6 +821,13 @@ const normalizeCatalogProduct = (
   const includeMediaUrls = options?.includeMediaUrls ?? true;
   const previewImage = media.images[0];
   const previewImageAssetId = previewImage?.id ?? assetIds[0];
+  const collection = getAttributeText(attributes, ATTRIBUTE_KEYSETS.collection);
+  const range = getAttributeText(attributes, ATTRIBUTE_KEYSETS.range);
+  const ean = getAttributeText(attributes, ATTRIBUTE_KEYSETS.ean);
+  const flowRate = getAttributeText(attributes, ATTRIBUTE_KEYSETS.flowRate);
+  const finish = getAttributeText(attributes, ATTRIBUTE_KEYSETS.finish);
+  const price = getAttributeNumber(attributes, ATTRIBUTE_KEYSETS.price);
+  const weight = getAttributeNumber(attributes, ATTRIBUTE_KEYSETS.weight);
 
   return {
     id: String(product.id || product._id || metadata.id || metadata.number || ''),
@@ -623,6 +840,15 @@ const normalizeCatalogProduct = (
     attachments: includeMediaUrls ? media.attachments : [],
     previewImageAssetId,
     previewImageAlt: previewImage?.alt,
+    thumbnailUrl: previewImage?.url,
+    thumbnailDownloadUrl: previewImage?.downloadUrl,
+    collection,
+    range,
+    ean,
+    flowRate,
+    finish,
+    price,
+    weight,
     assets: assetIds,
     attributes: includeAttributes ? attributes : [],
     attributeText: buildAttributeSearchText(attributes),
@@ -630,9 +856,12 @@ const normalizeCatalogProduct = (
     category: cleanText(metadataType || product.type || 'Sin categoría'),
     brand: cleanText(metadataBrand || product.brand || product.manufacturer || product.vendor || ''),
     stock: typeof product.stock === 'number' ? product.stock : undefined,
+    hasImage: media.images.length > 0 || Boolean(previewImageAssetId),
+    hasDocument: media.attachments.length > 0,
+    hasAsset: media.images.length > 0 || media.attachments.length > 0 || assetIds.length > 0,
     type: cleanText(metadataType || product.type || ''),
-    state: metadata.state || product.state,
-    publicationState: metadata.publicationState || product.publicationState,
+    state: normalizeCatalogState(metadata.state || product.state),
+    publicationState: normalizeCatalogState(metadata.publicationState || product.publicationState),
     lastUpdate: metadata.lastUpdate || product.lastUpdate,
     updatedAt: metadata.updatedAt || product.updatedAt,
     createDate: metadata.createDate || product.createDate,
@@ -640,6 +869,39 @@ const normalizeCatalogProduct = (
     lastUpdatedBy: metadata.lastUpdatedBy || product.lastUpdatedBy,
     variants: Array.isArray(product.variants) ? (product.variants as Record<string, unknown>[]) : [],
     relations: Array.isArray(product.relations) ? (product.relations as Record<string, unknown>[]) : [],
+  };
+};
+
+const buildFacetOptions = (products: Product[], pickValue: (product: Product) => string | undefined): CatalogPageMeta['rangeOptions'] => {
+  const countMap = new Map<string, { label: string; count: number }>();
+
+  for (const product of products) {
+    const raw = cleanText(pickValue(product) || '').trim();
+    if (!raw) continue;
+    const key = normalizeKey(raw);
+    const current = countMap.get(key);
+    if (current) {
+      current.count += 1;
+    } else {
+      countMap.set(key, { label: raw, count: 1 });
+    }
+  }
+
+  return [...countMap.entries()]
+    .map(([id, value]) => ({ id, label: value.label, count: value.count }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'es'));
+};
+
+const buildPriceRange = (products: Product[]): CatalogPageMeta['priceRange'] => {
+  const prices = products
+    .map(product => (typeof product.price === 'number' && Number.isFinite(product.price) ? product.price : undefined))
+    .filter((value): value is number => value !== undefined);
+
+  if (prices.length === 0) return { min: 0, max: 0 };
+
+  return {
+    min: Math.floor(Math.min(...prices)),
+    max: Math.ceil(Math.max(...prices)),
   };
 };
 
@@ -654,6 +916,10 @@ const buildCatalogBaseMeta = (products: Product[]): CatalogBaseMeta => {
     totalRawProductCount: products.length,
     categoryLabelMap,
     brandOptions: buildBrandOptions(products),
+    rangeOptions: buildFacetOptions(products, product => product.range),
+    flowOptions: buildFacetOptions(products, product => product.flowRate),
+    finishOptions: buildFacetOptions(products, product => product.finish),
+    priceRange: buildPriceRange(products),
     categoryTree,
     typeOptions: buildTypeOptions(products),
     statusOptions: buildStatusOptions(products),
@@ -674,6 +940,13 @@ const parseCatalogQuery = (query: Record<string, unknown>): CatalogQueryParams =
   searchTerm: typeof query.searchTerm === 'string' ? query.searchTerm : '',
   selectedName: typeof query.selectedName === 'string' ? query.selectedName : '',
   selectedNumber: typeof query.selectedNumber === 'string' ? query.selectedNumber : '',
+  selectedCollection: typeof query.selectedCollection === 'string' ? query.selectedCollection : '',
+  selectedRange: typeof query.selectedRange === 'string' ? query.selectedRange : '',
+  selectedPriceMin: typeof query.selectedPriceMin === 'string' ? query.selectedPriceMin : '',
+  selectedPriceMax: typeof query.selectedPriceMax === 'string' ? query.selectedPriceMax : '',
+  selectedEan: typeof query.selectedEan === 'string' ? query.selectedEan : '',
+  selectedFlow: typeof query.selectedFlow === 'string' ? query.selectedFlow : '',
+  selectedFinish: typeof query.selectedFinish === 'string' ? query.selectedFinish : '',
   selectedAttributeQuery: typeof query.selectedAttributeQuery === 'string' ? query.selectedAttributeQuery : '',
   selectedBrand: typeof query.selectedBrand === 'string' ? query.selectedBrand : 'all',
   selectedCategory: typeof query.selectedCategory === 'string' ? query.selectedCategory : 'all',
@@ -690,6 +963,13 @@ const buildCatalogPage = (entry: CatalogCacheEntry, query: CatalogQueryParams) =
     query.searchTerm,
     query.selectedName,
     query.selectedNumber,
+    query.selectedCollection,
+    query.selectedRange,
+    query.selectedPriceMin,
+    query.selectedPriceMax,
+    query.selectedEan,
+    query.selectedFlow,
+    query.selectedFinish,
     query.selectedAttributeQuery,
     query.selectedBrand,
     selectedCategoryIds,
@@ -730,18 +1010,32 @@ const readSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | 
   const supabase = getSupabaseAdmin();
   if (!supabase) return null;
   try {
-    const { data: row } = await (supabase as ReturnType<typeof createClient>)
+    const { data } = await (supabase as ReturnType<typeof createClient>)
       .from('catalog_cache')
       .select('products, meta, fetched_at')
       .eq('tenant_key', cacheKey)
       .maybeSingle();
+
+    const row = data as
+      | {
+          products?: unknown;
+          meta?: unknown;
+          fetched_at?: string;
+        }
+      | null;
 
     if (!row?.products || !row.fetched_at) return null;
 
     const products = Array.isArray(row.products) ? (row.products as Product[]) : [];
     const meta =
       row.meta && typeof row.meta === 'object'
-        ? (row.meta as CatalogBaseMeta)
+        ? {
+            rangeOptions: [],
+            flowOptions: [],
+            finishOptions: [],
+            priceRange: { min: 0, max: 0 },
+            ...(row.meta as CatalogBaseMeta),
+          }
         : buildCatalogBaseMeta(products);
 
     return {
@@ -758,9 +1052,7 @@ const persistSupabaseCache = async (cacheKey: string, entry: CatalogCacheEntry) 
   const supabase = getSupabaseAdmin();
   if (!supabase) return;
   try {
-    await (supabase as ReturnType<typeof createClient>)
-      .from('catalog_cache')
-      .upsert({
+    await ((supabase as ReturnType<typeof createClient>).from('catalog_cache') as any).upsert({
         tenant_key: cacheKey,
         products: entry.data,
         meta: entry.meta,
@@ -777,8 +1069,8 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
 
   const promise = (async () => {
     const token = await getAccessToken(tenant);
-    const definitionPromise = fetchDefinitions(tenant, token);
     const baseUrl = getBaseUrl(tenant.env);
+    const definitionMap = await fetchDefinitions(tenant, token);
     const allProducts: Record<string, unknown>[] = [];
     let cursor: string | null = null;
 
@@ -811,21 +1103,45 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
         throw new Error(`Bluestone products request failed (${response.status}): ${await response.text()}`);
       }
 
-      const payload = await response.json();
+      const payload = (await response.json()) as { nextCursor?: string | null; cursor?: string | null; data?: unknown[]; results?: unknown[]; items?: unknown[] };
       const batch = normalizeProductBatch(payload) as Record<string, unknown>[];
       allProducts.push(...batch);
       cursor = payload?.nextCursor || payload?.cursor || null;
     } while (cursor);
 
-    const definitionMap = await definitionPromise;
-    const normalizedProducts = allProducts
-      .map(product => {
-        const previewAssetIds = extractPreviewAssetIds(product);
-        const rawAttributes = Array.isArray(product.attributes) ? (product.attributes as unknown[]) : [];
-        const attributes = enrichAttributes(rawAttributes, definitionMap) as Array<Record<string, unknown>>;
+    const stagedProducts = allProducts.map(product => {
+      const previewAssetIds = extractPreviewAssetIds(product);
+      const rawAttributes = Array.isArray(product.attributes) ? (product.attributes as unknown[]) : [];
+      const attributes = enrichAttributes(rawAttributes, definitionMap) as Array<Record<string, unknown>>;
+      const embeddedMedia = extractEmbeddedMedia(product);
 
-        return normalizeCatalogProduct(product, { images: [], attachments: [] }, attributes, {
-          assetIds: previewAssetIds,
+      return {
+        product,
+        previewAssetIds,
+        attributes,
+        embeddedMedia,
+      };
+    });
+
+    const previewAssetIdsToHydrate = stagedProducts
+      .filter(entry => entry.embeddedMedia.images.length === 0 && entry.previewAssetIds.length > 0)
+      .map(entry => entry.previewAssetIds[0]!)
+      .filter(Boolean);
+
+    const hydratedPreviewAssets =
+      previewAssetIdsToHydrate.length > 0
+        ? await fetchAssetDownloads(tenant, token, previewAssetIdsToHydrate)
+        : new Map<string, { assetId: string; presignedUrl: string; fileName: string }>();
+
+    const normalizedProducts = stagedProducts
+      .map(entry => {
+        const media =
+          entry.embeddedMedia.images.length > 0 || entry.embeddedMedia.attachments.length > 0
+            ? entry.embeddedMedia
+            : buildProductMedia(entry.previewAssetIds.slice(0, 1), hydratedPreviewAssets);
+
+        return normalizeCatalogProduct(entry.product, media, entry.attributes, {
+          assetIds: entry.previewAssetIds,
           includeAttributes: false,
           includeMediaUrls: false,
         });
@@ -849,8 +1165,12 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
   });
 };
 
-const getCatalogIndex = async (tenant: TenantConfig) => {
-  const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
+const getCatalogIndex = async (tenant: TenantConfig, options?: { forceRefresh?: boolean }) => {
+  const cacheKey = buildTenantCacheKey(tenant);
+  if (options?.forceRefresh) {
+    return refreshCatalogIndex(tenant, cacheKey);
+  }
+
   const memoryEntry = catalogCache.get(cacheKey);
   if (memoryEntry && Date.now() - memoryEntry.fetchedAt < MEMORY_CACHE_TTL_MS) {
     return memoryEntry;
@@ -892,11 +1212,13 @@ const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
 
   const product = (await response.json()) as Record<string, unknown>;
   const assetIds = Array.isArray(product.assets) ? product.assets.map(asset => String(asset).trim()).filter(Boolean) : [];
+  const embeddedMedia = extractEmbeddedMedia(product);
+  const needsAssetDownloads = embeddedMedia.images.length === 0 && embeddedMedia.attachments.length === 0 && assetIds.length > 0;
   const [definitionMap, assetMap] = await Promise.all([
     fetchDefinitions(tenant, token),
-    fetchAssetDownloads(tenant, token, assetIds),
+    needsAssetDownloads ? fetchAssetDownloads(tenant, token, assetIds) : Promise.resolve(new Map<string, { assetId: string; presignedUrl: string; fileName: string }>()),
   ]);
-  const media = buildProductMedia(assetIds, assetMap);
+  const media = needsAssetDownloads ? buildProductMedia(assetIds, assetMap) : embeddedMedia;
   const attributes = Array.isArray(product.attributes)
     ? (enrichAttributes(product.attributes as unknown[], definitionMap) as Array<Record<string, unknown>>)
     : [];
@@ -922,12 +1244,18 @@ export default async function handler(req: { method?: string; query: Record<stri
     Object.entries(getCorsHeaders(req)).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
-    res.status(200).end();
+    res.status(200);
+    res.end();
     return;
   }
 
-  const auth = await requireAuth(req, res);
-  if (!auth) return;
+  const refreshRequested = String(req.query.refresh || '').trim() === '1';
+  const refreshAuthorized = refreshRequested && hasRefreshAccess(req);
+
+  if (!refreshAuthorized) {
+    const auth = await requireAuth(req, res);
+    if (!auth) return;
+  }
 
   if (!checkRateLimit(`${getClientIp(req)}:catalog`, 30, 60_000)) {
     sendJson(res, 429, { error: 'Too many requests' }, getCorsHeaders(req));
@@ -941,6 +1269,29 @@ export default async function handler(req: { method?: string; query: Record<stri
 
     if (!tenant) {
       sendJson(res, 400, { error: 'Tenant not configured' }, getCorsHeaders(req));
+      return;
+    }
+
+    if (refreshAuthorized) {
+      const tenantIds =
+        typeof req.query.tenant === 'string' && TENANT_MAP[req.query.tenant]
+          ? [req.query.tenant]
+          : getConfiguredTenantIds();
+      const refreshed = [];
+
+      for (const tenantId of tenantIds) {
+        const targetTenant = getTenantConfig(tenantId);
+        if (!targetTenant) continue;
+        const entry = await getCatalogIndex(targetTenant, { forceRefresh: true });
+        refreshed.push({
+          tenantId,
+          fetchedAt: new Date(entry.fetchedAt).toISOString(),
+          totalCatalogCount: entry.meta.totalCatalogCount,
+          totalRawProductCount: entry.meta.totalRawProductCount,
+        });
+      }
+
+      sendJson(res, 200, { ok: true, refreshed }, getCorsHeaders(req));
       return;
     }
 
