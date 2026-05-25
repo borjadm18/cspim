@@ -68,6 +68,7 @@ type CatalogCacheEntry = {
 
 type IndexedAttributeRecord = {
   definitionId: string;
+  definitionNumber: string;
   definitionName: string;
   name: string;
   group: string;
@@ -213,6 +214,17 @@ const hasRefreshAccess = (request: { headers?: Record<string, string | string[] 
   const explicitHeader = request.headers?.['x-catalog-refresh-secret'];
   const provided = Array.isArray(explicitHeader) ? explicitHeader[0] : explicitHeader;
   return provided === secret;
+};
+
+const checkSuperadminRole = async (userId: string): Promise<boolean> => {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return false;
+  const { data } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', userId)
+    .single();
+  return data?.role === 'superadmin';
 };
 
 const fetchWithRetry = async (input: string | URL, init: RequestInit, attempts = BLUESTONE_ATTEMPTS, timeoutMs = BLUESTONE_TIMEOUT_MS) => {
@@ -704,6 +716,7 @@ const summarizeAttributes = (attributes: unknown[]): IndexedAttributeRecord[] =>
     const fallbackName = cleanText(source.definitionId || 'Atributo');
     return {
       definitionId: cleanText(source.definitionId || ''),
+      definitionNumber: cleanText(source.number || source.definitionNumber || ''),
       definitionName: preferredName || fallbackName,
       name: preferredName || fallbackName,
       group: cleanText(source.groupName || source.group || ''),
@@ -724,6 +737,7 @@ const enrichAttributes = (attributes: unknown[], definitionMap: Map<string, Defi
 
     return {
       definitionId,
+      definitionNumber: cleanText(source.number || source.definitionNumber || definition?.number || ''),
       definitionName: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
       name: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
       group: cleanText(definition?.group || source.groupName || source.group || ''),
@@ -769,12 +783,18 @@ const matchesAttributeKey = (attribute: Record<string, unknown>, keys: readonly 
     attribute.definitionName,
     attribute.name,
     attribute.definitionId,
+    attribute.definitionNumber,
     attribute.label,
   ]
     .map(value => normalizeKey(value))
     .filter(Boolean);
 
-  return haystack.some(value => keys.some(key => value === normalizeKey(key) || value.includes(normalizeKey(key))));
+  return haystack.some(value =>
+    keys.some(key => {
+      const normalizedKey = normalizeKey(key);
+      return value === normalizedKey || value.startsWith(normalizedKey);
+    })
+  );
 };
 
 const findAttributeRecord = (attributes: Array<Record<string, unknown>>, keys: readonly string[]) =>
@@ -821,12 +841,12 @@ const normalizeCatalogProduct = (
   const includeMediaUrls = options?.includeMediaUrls ?? true;
   const previewImage = media.images[0];
   const previewImageAssetId = previewImage?.id ?? assetIds[0];
-  const collection = getAttributeText(attributes, ATTRIBUTE_KEYSETS.collection);
-  const range = getAttributeText(attributes, ATTRIBUTE_KEYSETS.range);
-  const ean = getAttributeText(attributes, ATTRIBUTE_KEYSETS.ean);
-  const flowRate = getAttributeText(attributes, ATTRIBUTE_KEYSETS.flowRate);
-  const finish = getAttributeText(attributes, ATTRIBUTE_KEYSETS.finish);
-  const price = getAttributeNumber(attributes, ATTRIBUTE_KEYSETS.price);
+  const collection = getAttributeText(attributes, ['collection', 'coleccion', 'colecciÃ³n']);
+  const range = getAttributeText(attributes, ['69f1c5af54e43fd1f8a009f1', 'range', 'gama']);
+  const ean = getAttributeText(attributes, ['69f1c5af4f379fb27d452d06', 'ean', 'gtin', 'codigoean', 'cÃ³digoean', 'codigo ean', 'cÃ³digo ean']);
+  const flowRate = getAttributeText(attributes, ['692d69b4f8de9bb8df7818d5', '6995d02329297e5aaf6e7796', 'caudal', 'flow rate', 'flowrate', 'l/min', 'l min']);
+  const finish = getAttributeText(attributes, ['692962777118d05218bb7788', '6995d022fc7f3f7a6325fb21', 'acabado', 'acabados tres', 'acabados']);
+  const price = getAttributeNumber(attributes, ['69297107f8de9bb8df77a29b', 'price', 'precio', 'pvp']);
   const weight = getAttributeNumber(attributes, ATTRIBUTE_KEYSETS.weight);
 
   return {
@@ -1250,11 +1270,14 @@ export default async function handler(req: { method?: string; query: Record<stri
   }
 
   const refreshRequested = String(req.query.refresh || '').trim() === '1';
-  const refreshAuthorized = refreshRequested && hasRefreshAccess(req);
+  let refreshAuthorized = refreshRequested && hasRefreshAccess(req);
 
   if (!refreshAuthorized) {
     const auth = await requireAuth(req, res);
     if (!auth) return;
+    if (refreshRequested) {
+      refreshAuthorized = await checkSuperadminRole(auth.userId);
+    }
   }
 
   if (!checkRateLimit(`${getClientIp(req)}:catalog`, 30, 60_000)) {
