@@ -7,7 +7,7 @@
   "crons": [
     {
       "path": "/api/catalog?refresh=1",
-      "schedule": "*/25 * * * *"
+      "schedule": "0 5 * * *"
     }
   ],
   "rewrites": [
@@ -17,6 +17,12 @@
     }
   ],
   "headers": [
+    {
+      "source": "/api/catalog",
+      "headers": [
+        { "key": "Cache-Control", "value": "s-maxage=1800, stale-while-revalidate=86400" }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
