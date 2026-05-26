@@ -14,6 +14,7 @@ import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel } from '../se
 import { ProductContentTab } from './ProductContentTab';
 import { ProductVariantsPanel } from './ProductVariantsPanel';
 import { useToast } from '../../../shared/ui/toast';
+import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import {
   DEFAULT_LOCALES,
   TECHNICAL_IMAGE_KEYWORDS,
@@ -102,6 +103,7 @@ export function ProductModal({
   const [copiedSku, setCopiedSku] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const hasUnsavedChangesRef = useRef(false);
   const onPrevRef = useRef(onPrev);
   const onNextRef = useRef(onNext);
@@ -237,10 +239,10 @@ export function ProductModal({
     [draft, confirmedDraft]
   );
 
-  const confirmDiscardChanges = (action: () => void) => {
+  const confirmDiscardChanges = async (action: () => void) => {
     if (hasUnsavedChanges) {
-      const confirmed = window.confirm('¿Descartar los cambios? Los datos no guardados se perderán.');
-      if (!confirmed) return;
+      const ok = await confirm({ message: '¿Descartar los cambios? Los datos no guardados se perderán.', confirmLabel: 'Descartar', danger: true });
+      if (!ok) return;
     }
     action();
   };
@@ -253,17 +255,17 @@ export function ProductModal({
     const handler = (event: KeyboardEvent) => {
       const target = event.target;
       if (target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return;
-      const confirmAndRun = (action: (() => void) | undefined) => {
+      const confirmAndRun = async (action: (() => void) | undefined) => {
         if (!action) return;
         if (hasUnsavedChangesRef.current) {
-          const confirmed = window.confirm('¿Descartar los cambios? Los datos no guardados se perderán.');
-          if (!confirmed) return;
+          const ok = await confirm({ message: '¿Descartar los cambios? Los datos no guardados se perderán.', confirmLabel: 'Descartar', danger: true });
+          if (!ok) return;
         }
         action();
       };
-      if (event.key === 'ArrowLeft') { confirmAndRun(onPrevRef.current); return; }
-      if (event.key === 'ArrowRight') { confirmAndRun(onNextRef.current); return; }
-      if (event.key === 'Escape') { confirmAndRun(onCloseRef.current); }
+      if (event.key === 'ArrowLeft') { void confirmAndRun(onPrevRef.current); return; }
+      if (event.key === 'ArrowRight') { void confirmAndRun(onNextRef.current); return; }
+      if (event.key === 'Escape') { void confirmAndRun(onCloseRef.current); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);

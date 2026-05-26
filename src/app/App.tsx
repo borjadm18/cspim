@@ -7,7 +7,9 @@ import { ErrorBoundary } from '../shared/ui/ErrorBoundary';
 import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
 import { ProductCard } from '../features/catalog/ui/ProductCard';
 import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
+import { CatalogSidebar } from '../features/catalog/ui/CatalogSidebar';
 import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
+import { UserProfileModal } from '../features/catalog/ui/UserProfileModal';
 import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantBranding } from '../hooks/useTenantBranding';
@@ -15,6 +17,7 @@ import type { CatalogSortKey } from '../features/catalog/model/catalogTypes';
 import { fetchProductDetail, type Product } from '../features/catalog/api/productService';
 import { resolveCatalogTheme } from '../shared/theme/catalogThemes';
 import { ToastProvider, useToast } from '../shared/ui/toast';
+import { ConfirmDialogProvider, useConfirm } from '../shared/ui/ConfirmDialog';
 import { CATALOG_ACCESS_MODE } from '../shared/config/catalogTenant';
 
 const LoginPage = lazy(() => import('../pages/LoginPage'));
@@ -35,7 +38,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
 }
 
 function CatalogPage() {
-  const { profile, signOut } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const branding = useTenantBranding(profile?.tenantId);
@@ -134,10 +137,12 @@ function CatalogPage() {
     cacheIsSlim,
   } = useCatalog();
   const { showToast } = useToast();
+  const confirm = useConfirm();
   const [activeLocale, setActiveLocale] = useState('ES');
   const [isProductDirty, setIsProductDirty] = useState(false);
   const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
   const [isSavedViewsOpen, setIsSavedViewsOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   const activeFilterCount = [
     searchTerm.trim(),
     selectedName.trim(),
@@ -212,10 +217,14 @@ function CatalogPage() {
     showToast('Cambios guardados', 'success');
   };
 
-  const handleTenantChange = (tenantId: string) => {
+  const handleTenantChange = async (tenantId: string) => {
     if (isProductDirty && selectedProduct) {
-      const confirmed = window.confirm('Hay cambios sin guardar en el producto abierto. ¿Cambiar de tenant de todas formas?');
-      if (!confirmed) return;
+      const ok = await confirm({
+        message: 'Hay cambios sin guardar en el producto abierto. ¿Cambiar de tenant de todas formas?',
+        confirmLabel: 'Cambiar',
+        danger: true,
+      });
+      if (!ok) return;
     }
     setSelectedTenantId(tenantId);
   };
@@ -334,31 +343,25 @@ function CatalogPage() {
     '--catalog-page-end': theme.pageEnd,
   } as React.CSSProperties;
 
+  useEffect(() => {
+    const faviconHref = settings.faviconUrl || branding?.logoUrl;
+    if (typeof document === 'undefined' || !faviconHref) return;
+
+    let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!favicon) {
+      favicon = document.createElement('link');
+      favicon.rel = 'icon';
+      document.head.appendChild(favicon);
+    }
+
+    favicon.href = faviconHref;
+  }, [branding?.logoUrl, settings.faviconUrl]);
+
   return (
     <div
       className="min-h-screen bg-[linear-gradient(180deg,var(--catalog-page-start)_0%,var(--catalog-page-end)_100%)] text-slate-900"
       style={appStyle}
     >
-      <CatalogHeader
-        searchTerm={searchTerm}
-        onSearchTermChange={setSearchTerm}
-        onSearchSubmit={commitSearchTerm}
-        recentSearches={recentSearches}
-        onRecentSearchSelect={commitSearchTerm}
-        onClearRecentSearches={clearRecentSearches}
-        productsCount={visibleCatalogCount}
-        filteredCount={filteredGroupCount}
-        activeViewName={activeSavedView?.name ?? null}
-        logoUrl={branding?.logoUrl ?? settings.logoUrl}
-        tenantOptions={tenantOptions}
-        selectedTenantId={selectedTenantId}
-        accessMode={CATALOG_ACCESS_MODE}
-        onTenantChange={handleTenantChange}
-        sortControl={sortControl}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onSignOut={signOut}
-      />
-
       {isMobileFiltersOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Filtros">
           <div className="absolute inset-0 bg-slate-900/50" onClick={() => setIsMobileFiltersOpen(false)} />
@@ -444,56 +447,94 @@ function CatalogPage() {
         ) : error ? (
           <ErrorMessage message={error} onRetry={reloadProducts} />
         ) : (
-          <div className="grid gap-6 lg:grid-cols-[clamp(300px,20vw,360px)_minmax(0,1fr)]">
+          <div className="grid gap-6 lg:grid-cols-[clamp(310px,21vw,360px)_minmax(0,1fr)]">
             <aside className="hidden lg:block">
+              <CatalogSidebar
+                logoUrl={branding?.logoUrl ?? settings.logoUrl}
+                activeViewName={activeSavedView?.name ?? null}
+                tenantOptions={tenantOptions}
+                selectedTenantId={selectedTenantId}
+                accessMode={CATALOG_ACCESS_MODE}
+                onTenantChange={handleTenantChange}
+                userEmail={user?.email ?? null}
+                userFullName={profile?.fullName ?? null}
+                onOpenProfile={() => setIsProfileOpen(true)}
+                onOpenSettings={() => setIsSettingsOpen(true)}
+                onSignOut={signOut}
+              >
                 <FiltersSidebar
                   products={products}
                   summaryProductsCount={totalCatalogCount}
                   summaryWithImagesCount={withImagesCount}
-                brandOptions={brandOptions}
+                  brandOptions={brandOptions}
                   rangeOptions={rangeOptions}
                   flowOptions={flowOptions}
                   finishOptions={finishOptions}
                   priceRange={priceRange}
-                selectedBrand={selectedBrand}
-                onBrandChange={setSelectedBrand}
-                categoryTree={categoryTree}
-                selectedCategory={selectedCategory}
-                onCategoryChange={setSelectedCategory}
-                typeOptions={typeOptions}
-                selectedType={selectedType}
-                onTypeChange={setSelectedType}
-                statusOptions={statusOptions}
-                selectedStatus={selectedStatus}
-                onStatusChange={setSelectedStatus}
-                selectedMediaFilter={selectedMediaFilter}
-                onMediaFilterChange={setSelectedMediaFilter}
-                selectedQuickFilter={selectedQuickFilter}
-                selectedName={selectedName}
-                onNameChange={setSelectedName}
-                selectedNumber={selectedNumber}
-                onNumberChange={setSelectedNumber}
-                selectedCollection={selectedCollection}
-                onCollectionChange={setSelectedCollection}
-                selectedRange={selectedRange}
-                onRangeChange={setSelectedRange}
-                selectedPriceMin={selectedPriceMin}
-                onPriceMinChange={setSelectedPriceMin}
-                selectedPriceMax={selectedPriceMax}
-                onPriceMaxChange={setSelectedPriceMax}
-                selectedEan={selectedEan}
-                onEanChange={setSelectedEan}
-                selectedFlow={selectedFlow}
-                onFlowChange={setSelectedFlow}
-                selectedFinish={selectedFinish}
-                onFinishChange={setSelectedFinish}
-                selectedAttributeQuery={selectedAttributeQuery}
-                onAttributeQueryChange={setSelectedAttributeQuery}
-                onClearFilters={handleClearFilters}
-              />
+                  selectedBrand={selectedBrand}
+                  onBrandChange={setSelectedBrand}
+                  categoryTree={categoryTree}
+                  selectedCategory={selectedCategory}
+                  onCategoryChange={setSelectedCategory}
+                  typeOptions={typeOptions}
+                  selectedType={selectedType}
+                  onTypeChange={setSelectedType}
+                  statusOptions={statusOptions}
+                  selectedStatus={selectedStatus}
+                  onStatusChange={setSelectedStatus}
+                  selectedMediaFilter={selectedMediaFilter}
+                  onMediaFilterChange={setSelectedMediaFilter}
+                  selectedQuickFilter={selectedQuickFilter}
+                  selectedName={selectedName}
+                  onNameChange={setSelectedName}
+                  selectedNumber={selectedNumber}
+                  onNumberChange={setSelectedNumber}
+                  selectedCollection={selectedCollection}
+                  onCollectionChange={setSelectedCollection}
+                  selectedRange={selectedRange}
+                  onRangeChange={setSelectedRange}
+                  selectedPriceMin={selectedPriceMin}
+                  onPriceMinChange={setSelectedPriceMin}
+                  selectedPriceMax={selectedPriceMax}
+                  onPriceMaxChange={setSelectedPriceMax}
+                  selectedEan={selectedEan}
+                  onEanChange={setSelectedEan}
+                  selectedFlow={selectedFlow}
+                  onFlowChange={setSelectedFlow}
+                  selectedFinish={selectedFinish}
+                  onFinishChange={setSelectedFinish}
+                  selectedAttributeQuery={selectedAttributeQuery}
+                  onAttributeQueryChange={setSelectedAttributeQuery}
+                  onClearFilters={handleClearFilters}
+                  embedded
+                />
+              </CatalogSidebar>
             </aside>
 
             <section className="min-w-0">
+              <CatalogHeader
+                searchTerm={searchTerm}
+                onSearchTermChange={setSearchTerm}
+                onSearchSubmit={commitSearchTerm}
+                recentSearches={recentSearches}
+                onRecentSearchSelect={commitSearchTerm}
+                onClearRecentSearches={clearRecentSearches}
+                productsCount={visibleCatalogCount}
+                filteredCount={filteredGroupCount}
+                activeViewName={activeSavedView?.name ?? null}
+                logoUrl={branding?.logoUrl ?? settings.logoUrl}
+                tenantOptions={tenantOptions}
+                selectedTenantId={selectedTenantId}
+                accessMode={CATALOG_ACCESS_MODE}
+                onTenantChange={handleTenantChange}
+                sortControl={sortControl}
+                userEmail={user?.email ?? null}
+                userFullName={profile?.fullName ?? null}
+                onOpenProfile={() => setIsProfileOpen(true)}
+                onOpenSettings={() => setIsSettingsOpen(true)}
+                onSignOut={signOut}
+              />
+
               {activeFilterCount > 0 && (
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   {searchTerm.trim() ? <FilterChip label={`"${searchTerm}"`} onRemove={() => { setSearchTerm(''); commitSearchTerm(''); }} /> : null}
@@ -518,12 +559,7 @@ function CatalogPage() {
                 </div>
               )}
 
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-slate-500">
-                  Mostrando{' '}
-                  <span className="font-semibold text-slate-700">{filteredGroupCount}</span> grupos ·{' '}
-                  <span className="font-semibold text-slate-700">{totalCatalogCount}</span> productos
-                </p>
+              <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
                 <div className="flex items-center gap-2">
                   {savedViews.length > 0 && (
                     <div className="relative">
@@ -540,7 +576,10 @@ function CatalogPage() {
                             <button
                               key={view.name}
                               type="button"
-                              onClick={() => { applySavedView(view.name); setIsSavedViewsOpen(false); }}
+                              onClick={() => {
+                                applySavedView(view.name);
+                                setIsSavedViewsOpen(false);
+                              }}
                               className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                             >
                               {view.name}
@@ -737,6 +776,14 @@ function CatalogPage() {
         shareMessage={shareMessage}
         shareError={shareError}
       />
+      <UserProfileModal
+        open={isProfileOpen}
+        email={user?.email ?? null}
+        fullName={profile?.fullName ?? null}
+        role={profile?.role ?? null}
+        organizationName={tenantOptions.find(option => option.id === selectedTenantId)?.label ?? null}
+        onClose={() => setIsProfileOpen(false)}
+      />
     </div>
   );
 }
@@ -791,6 +838,7 @@ function App() {
   return (
     <BrowserRouter>
       <ToastProvider>
+      <ConfirmDialogProvider>
       <Routes>
         <Route
           path="/login"
@@ -819,6 +867,7 @@ function App() {
           }
         />
       </Routes>
+      </ConfirmDialogProvider>
       </ToastProvider>
     </BrowserRouter>
   );
