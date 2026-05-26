@@ -15,6 +15,8 @@
     "check:sync": "node -e \"const fs=require('fs');const a=fs.readFileSync('api/_lib/catalogUtils.ts','utf8').replace(/\\/\\/.*$/gm,'').replace(/^\\s*$/gm,'').trim();const b=fs.readFileSync('src/features/catalog/selectors/catalogSelectors.ts','utf8').replace(/\\/\\/.*$/gm,'').replace(/^\\s*$/gm,'').trim();const aFns=[...a.matchAll(/^export const (\\w+)/gm)].map(m=>m[1]).sort();const bFns=[...b.matchAll(/^export const (\\w+)/gm)].map(m=>m[1]).sort();const onlyInA=aFns.filter(f=>!bFns.includes(f));const onlyInB=bFns.filter(f=>!aFns.includes(f));if(onlyInA.length||onlyInB.length){console.warn('SYNC DRIFT — catalogUtils vs catalogSelectors');onlyInA.forEach(f=>console.warn(' + catalogUtils only:',f));onlyInB.forEach(f=>console.warn(' + catalogSelectors only:',f));process.exit(1);}else{console.log('OK — catalogUtils and catalogSelectors exports are in sync');}\""
   },
   "dependencies": {
+    "@sentry/node": "^10.54.0",
+    "@sentry/react": "^10.54.0",
     "@supabase/auth-helpers-react": "^0.15.0",
     "@supabase/supabase-js": "^2.57.4",
     "lucide-react": "^0.344.0",
@@ -24,12 +26,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.9.1",
-    "dotenv": "^17.2.3",
     "@types/node": "^25.9.1",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.18",
+    "dotenv": "^17.2.3",
     "eslint": "^9.9.1",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.11",

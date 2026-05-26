@@ -1,13 +1,18 @@
 /// <reference types="node" />
 import { createClient } from '@supabase/supabase-js';
-import type { CatalogPageMeta, CatalogQueryParams, CatalogSortKey } from '../src/features/catalog/model/catalogTypes.js';
+import { initSentry, Sentry } from './_lib/sentry.js';
+import type {
+  CatalogPageMeta,
+  CatalogQueryParams,
+  CatalogSortKey,
+  MediaFilter,
+  QuickFilter,
+} from '../src/features/catalog/model/catalogTypes.js';
 import {
   buildBrandOptions,
   buildCategoryLabelMap,
   buildCategoryOptions,
   buildCategoryTree,
-  buildFacetOptions,
-  buildPriceRange,
   buildStatusOptions,
   buildTypeOptions,
   cleanText,
@@ -225,7 +230,8 @@ const checkSuperadminRole = async (userId: string): Promise<boolean> => {
     .select('role')
     .eq('id', userId)
     .single();
-  return data?.role === 'superadmin';
+  const profile = data as { role?: string } | null;
+  return profile?.role === 'superadmin';
 };
 
 const fetchWithRetry = async (input: string | URL, init: RequestInit, attempts = BLUESTONE_ATTEMPTS, timeoutMs = BLUESTONE_TIMEOUT_MS) => {
@@ -918,6 +924,17 @@ const buildPriceRange = (products: Product[]): CatalogPageMeta['priceRange'] => 
   };
 };
 
+const isMediaFilter = (value: unknown): value is MediaFilter =>
+  value === 'all' ||
+  value === 'with-assets' ||
+  value === 'without-assets' ||
+  value === 'images-only' ||
+  value === 'documents-only' ||
+  value === 'mixed';
+
+const isQuickFilter = (value: unknown): value is QuickFilter =>
+  value === 'all' || value === 'images' || value === 'attachments' || value === 'categories' || value === 'assets';
+
 const buildCatalogBaseMeta = (products: Product[]): CatalogBaseMeta => {
   const categoryLabelMap = buildCategoryLabelMap(products);
   const categoryOptions = buildCategoryOptions(products, categoryLabelMap);
@@ -965,8 +982,8 @@ const parseCatalogQuery = (query: Record<string, unknown>): CatalogQueryParams =
   selectedCategory: typeof query.selectedCategory === 'string' ? query.selectedCategory : 'all',
   selectedType: typeof query.selectedType === 'string' ? query.selectedType : 'all',
   selectedStatus: typeof query.selectedStatus === 'string' ? query.selectedStatus : 'all',
-  selectedMediaFilter: typeof query.selectedMediaFilter === 'string' ? query.selectedMediaFilter : 'all',
-  selectedQuickFilter: typeof query.selectedQuickFilter === 'string' ? query.selectedQuickFilter : 'all',
+  selectedMediaFilter: isMediaFilter(query.selectedMediaFilter) ? query.selectedMediaFilter : 'all',
+  selectedQuickFilter: isQuickFilter(query.selectedQuickFilter) ? query.selectedQuickFilter : 'all',
 });
 
 const buildCatalogPage = (entry: CatalogCacheEntry, query: CatalogQueryParams) => {
@@ -1040,16 +1057,27 @@ const readSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | 
     if (!row?.products || !row.fetched_at) return null;
 
     const products = Array.isArray(row.products) ? (row.products as Product[]) : [];
-    const meta =
-      row.meta && typeof row.meta === 'object'
-        ? {
-            rangeOptions: [],
-            flowOptions: [],
-            finishOptions: [],
-            priceRange: { min: 0, max: 0 },
-            ...(row.meta as CatalogBaseMeta),
-          }
-        : buildCatalogBaseMeta(products);
+    const meta = (() => {
+      if (!row.meta || typeof row.meta !== 'object') {
+        return buildCatalogBaseMeta(products);
+      }
+
+      const storedMeta = row.meta as Partial<CatalogBaseMeta>;
+      return {
+        ...buildCatalogBaseMeta(products),
+        ...storedMeta,
+        rangeOptions: Array.isArray(storedMeta.rangeOptions) ? storedMeta.rangeOptions : [],
+        flowOptions: Array.isArray(storedMeta.flowOptions) ? storedMeta.flowOptions : [],
+        finishOptions: Array.isArray(storedMeta.finishOptions) ? storedMeta.finishOptions : [],
+        priceRange:
+          storedMeta.priceRange &&
+          typeof storedMeta.priceRange === 'object' &&
+          typeof storedMeta.priceRange.min === 'number' &&
+          typeof storedMeta.priceRange.max === 'number'
+            ? storedMeta.priceRange
+            : { min: 0, max: 0 },
+      } satisfies CatalogBaseMeta;
+    })();
 
     return {
       data: products,
@@ -1376,6 +1404,8 @@ const sendJson = (res: { status: (statusCode: number) => void; setHeader: (name:
 };
 
 export default async function handler(req: { method?: string; query: Record<string, unknown>; headers?: Record<string, string | string[] | undefined>; url?: string }, res: { status: (statusCode: number) => void; setHeader: (name: string, value: string) => void; send: (body: string) => void; end: () => void }) {
+  initSentry();
+
   if (req.method === 'OPTIONS') {
     Object.entries(getCorsHeaders(req)).forEach(([key, value]) => {
       res.setHeader(key, value);
@@ -1444,7 +1474,9 @@ export default async function handler(req: { method?: string; query: Record<stri
     const page = buildCatalogPage(catalogIndex, query);
     sendJson(res, 200, { data: page.products, meta: page.meta }, getCorsHeaders(req));
   } catch (err: unknown) {
+    Sentry.captureException(err);
     console.error('[catalog] Internal error:', err);
+    await Sentry.flush(1500);
     sendJson(
       res,
       500,
