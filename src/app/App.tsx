@@ -60,9 +60,23 @@ function CatalogPage() {
     searchTerm,
     selectedName,
     selectedNumber,
+    selectedCollection,
+    selectedRange,
+    selectedPriceMin,
+    selectedPriceMax,
+    selectedEan,
+    selectedFlow,
+    selectedFinish,
     setSearchTerm,
     setSelectedName,
     setSelectedNumber,
+    setSelectedCollection,
+    setSelectedRange,
+    setSelectedPriceMin,
+    setSelectedPriceMax,
+    setSelectedEan,
+    setSelectedFlow,
+    setSelectedFinish,
     selectedBrand,
     setSelectedBrand,
     selectedCategory,
@@ -83,6 +97,10 @@ function CatalogPage() {
     isSettingsOpen,
     setIsSettingsOpen,
     brandOptions,
+    rangeOptions,
+    flowOptions,
+    finishOptions,
+    priceRange,
     categoryTree,
     categoryLabelMap,
     typeOptions,
@@ -113,6 +131,7 @@ function CatalogPage() {
     filteredGroupCount,
     totalCatalogCount,
     withImagesCount,
+    cacheIsSlim,
   } = useCatalog();
   const { showToast } = useToast();
   const [activeLocale, setActiveLocale] = useState('ES');
@@ -123,6 +142,13 @@ function CatalogPage() {
     searchTerm.trim(),
     selectedName.trim(),
     selectedNumber.trim(),
+    selectedCollection.trim(),
+    selectedRange.trim(),
+    selectedPriceMin.trim(),
+    selectedPriceMax.trim(),
+    selectedEan.trim(),
+    selectedFlow.trim(),
+    selectedFinish.trim(),
     selectedAttributeQuery.trim(),
     selectedBrand !== 'all',
     selectedCategory !== 'all',
@@ -274,6 +300,12 @@ function CatalogPage() {
     };
   }, [selectedProduct?.id, selectedTenantId, setSelectedProduct]);
 
+  useEffect(() => {
+    if (!cacheIsSlim) return;
+    const id = setInterval(() => { void reloadProducts(); }, 60_000);
+    return () => clearInterval(id);
+  }, [cacheIsSlim, reloadProducts]);
+
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId, settings.customAccentHex);
   const sortControl = (
@@ -337,6 +369,10 @@ function CatalogPage() {
                 summaryProductsCount={totalCatalogCount}
                 summaryWithImagesCount={withImagesCount}
                 brandOptions={brandOptions}
+                rangeOptions={rangeOptions}
+                flowOptions={flowOptions}
+                finishOptions={finishOptions}
+                priceRange={priceRange}
                 selectedBrand={selectedBrand}
                 onBrandChange={setSelectedBrand}
                 categoryTree={categoryTree}
@@ -355,6 +391,20 @@ function CatalogPage() {
                 onNameChange={setSelectedName}
                 selectedNumber={selectedNumber}
                 onNumberChange={setSelectedNumber}
+                selectedCollection={selectedCollection}
+                onCollectionChange={setSelectedCollection}
+                selectedRange={selectedRange}
+                onRangeChange={setSelectedRange}
+                selectedPriceMin={selectedPriceMin}
+                onPriceMinChange={setSelectedPriceMin}
+                selectedPriceMax={selectedPriceMax}
+                onPriceMaxChange={setSelectedPriceMax}
+                selectedEan={selectedEan}
+                onEanChange={setSelectedEan}
+                selectedFlow={selectedFlow}
+                onFlowChange={setSelectedFlow}
+                selectedFinish={selectedFinish}
+                onFinishChange={setSelectedFinish}
                 selectedAttributeQuery={selectedAttributeQuery}
                 onAttributeQueryChange={setSelectedAttributeQuery}
                 onClearFilters={handleClearFilters}
@@ -400,7 +450,11 @@ function CatalogPage() {
                   products={products}
                   summaryProductsCount={totalCatalogCount}
                   summaryWithImagesCount={withImagesCount}
-                  brandOptions={brandOptions}
+                brandOptions={brandOptions}
+                  rangeOptions={rangeOptions}
+                  flowOptions={flowOptions}
+                  finishOptions={finishOptions}
+                  priceRange={priceRange}
                 selectedBrand={selectedBrand}
                 onBrandChange={setSelectedBrand}
                 categoryTree={categoryTree}
@@ -419,6 +473,20 @@ function CatalogPage() {
                 onNameChange={setSelectedName}
                 selectedNumber={selectedNumber}
                 onNumberChange={setSelectedNumber}
+                selectedCollection={selectedCollection}
+                onCollectionChange={setSelectedCollection}
+                selectedRange={selectedRange}
+                onRangeChange={setSelectedRange}
+                selectedPriceMin={selectedPriceMin}
+                onPriceMinChange={setSelectedPriceMin}
+                selectedPriceMax={selectedPriceMax}
+                onPriceMaxChange={setSelectedPriceMax}
+                selectedEan={selectedEan}
+                onEanChange={setSelectedEan}
+                selectedFlow={selectedFlow}
+                onFlowChange={setSelectedFlow}
+                selectedFinish={selectedFinish}
+                onFinishChange={setSelectedFinish}
                 selectedAttributeQuery={selectedAttributeQuery}
                 onAttributeQueryChange={setSelectedAttributeQuery}
                 onClearFilters={handleClearFilters}
@@ -430,7 +498,14 @@ function CatalogPage() {
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   {searchTerm.trim() ? <FilterChip label={`"${searchTerm}"`} onRemove={() => { setSearchTerm(''); commitSearchTerm(''); }} /> : null}
                   {selectedName.trim() ? <FilterChip label={`Nombre: ${selectedName}`} onRemove={() => setSelectedName('')} /> : null}
-                  {selectedNumber.trim() ? <FilterChip label={`Número: ${selectedNumber}`} onRemove={() => setSelectedNumber('')} /> : null}
+                  {selectedNumber.trim() ? <FilterChip label={`SKU: ${selectedNumber}`} onRemove={() => setSelectedNumber('')} /> : null}
+                  {selectedCollection.trim() ? <FilterChip label={`Colección: ${selectedCollection}`} onRemove={() => setSelectedCollection('')} /> : null}
+                  {selectedRange.trim() ? <FilterChip label={`Gama: ${rangeOptions.find(option => option.id === selectedRange)?.label ?? selectedRange}`} onRemove={() => setSelectedRange('')} /> : null}
+                  {selectedPriceMin.trim() ? <FilterChip label={`Precio mín.: ${selectedPriceMin} €`} onRemove={() => setSelectedPriceMin('')} /> : null}
+                  {selectedPriceMax.trim() ? <FilterChip label={`Precio máx.: ${selectedPriceMax} €`} onRemove={() => setSelectedPriceMax('')} /> : null}
+                  {selectedEan.trim() ? <FilterChip label={`EAN: ${selectedEan}`} onRemove={() => setSelectedEan('')} /> : null}
+                  {selectedFlow.trim() ? <FilterChip label={`Caudal: ${flowOptions.find(option => option.id === selectedFlow)?.label ?? selectedFlow}`} onRemove={() => setSelectedFlow('')} /> : null}
+                  {selectedFinish.trim() ? <FilterChip label={`Acabado: ${finishOptions.find(option => option.id === selectedFinish)?.label ?? selectedFinish}`} onRemove={() => setSelectedFinish('')} /> : null}
                   {selectedAttributeQuery.trim() ? <FilterChip label={`Atributo: ${selectedAttributeQuery}`} onRemove={() => setSelectedAttributeQuery('')} /> : null}
                   {selectedBrand !== 'all' ? <FilterChip label={brandOptions.find(b => b.id === selectedBrand)?.label ?? selectedBrand} onRemove={() => setSelectedBrand('all')} /> : null}
                   {selectedCategory !== 'all' ? <FilterChip label={categoryLabelMap[selectedCategory] ?? selectedCategory} onRemove={() => setSelectedCategory('all')} /> : null}
@@ -497,6 +572,14 @@ function CatalogPage() {
                     {searchTerm ||
                     selectedName ||
                     selectedNumber ||
+                    selectedCollection ||
+                    selectedRange ||
+                    selectedPriceMin ||
+                    selectedPriceMax ||
+                    selectedEan ||
+                    selectedFlow ||
+                    selectedFinish ||
+                    selectedAttributeQuery ||
                     selectedBrand !== 'all' ||
                     selectedCategory !== 'all' ||
                     selectedType !== 'all' ||
@@ -508,6 +591,12 @@ function CatalogPage() {
                 </div>
               ) : (
                 <>
+                  {cacheIsSlim && (
+                    <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+                      <svg className="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                      Vista preliminar — el catálogo completo se carga en segundo plano y se actualizará automáticamente.
+                    </div>
+                  )}
                   <div className={`grid grid-cols-1 ${gridGapClass} md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
                     {paginatedProducts.map(product => (
                       <ProductCard
