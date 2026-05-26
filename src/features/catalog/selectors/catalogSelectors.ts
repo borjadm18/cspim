@@ -1,4 +1,4 @@
-﻿import type { Product } from '../api/productService';
+﻿import type { Product, ProductAttachment, ProductImage } from '../api/productService.js';
 import type {
   BrandOption,
   CategoryOption,
@@ -7,12 +7,12 @@ import type {
   QuickFilter,
   StatusOption,
   TypeOption,
-} from '../model/catalogTypes';
+} from '../model/catalogTypes.js';
 
 export const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+  if (!/[ÃÂâ]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
@@ -23,6 +23,36 @@ export const cleanText = (value: unknown) => {
 };
 
 export const normalizeKey = (value: unknown) => cleanText(value).trim().toLowerCase();
+
+const tokenizeSearch = (value: unknown) =>
+  normalizeKey(value)
+    .split(/[^\p{L}\p{N}]+/u)
+    .map(token => token.trim())
+    .filter(token => token.length > 1);
+
+const matchesStructuredQuery = (values: unknown[], query: string) => {
+  const normalizedQuery = normalizeKey(query);
+  if (!normalizedQuery) return true;
+
+  const fullHaystack = values.map(value => cleanText(value)).join(' ').toLowerCase();
+  if (normalizedQuery.length >= 3 && fullHaystack.includes(normalizedQuery)) return true;
+
+  const hayTokens = values.flatMap(tokenizeSearch);
+  const queryTokens = tokenizeSearch(query);
+  if (!queryTokens.length) return false;
+
+  return queryTokens.every(queryToken =>
+    hayTokens.some(hayToken => hayToken === queryToken || hayToken.startsWith(queryToken))
+  );
+};
+
+const parseNumberish = (value: unknown) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const text = cleanText(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  if (!text) return null;
+  const parsed = Number.parseFloat(text[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 export const getProductBrand = (product: Product) => {
   const candidates = [
@@ -168,15 +198,22 @@ export const getProductStatusLabel = (status: unknown) => {
 };
 
 export const hasAssets = (product: Product) => {
+  if (typeof (product as any).hasAsset === 'boolean') return Boolean((product as any).hasAsset);
   const images = Array.isArray(product.images) ? product.images.length : 0;
   const attachments = Array.isArray((product as any).attachments) ? (product as any).attachments.length : 0;
   const assets = Array.isArray((product as any).assets) ? (product as any).assets.length : 0;
   return images > 0 || attachments > 0 || assets > 0;
 };
 
-export const hasImages = (product: Product) => (product.images?.length || 0) > 0;
+export const hasImages = (product: Product) =>
+  typeof (product as any).hasImage === 'boolean'
+    ? Boolean((product as any).hasImage)
+    : (product.images?.length || 0) > 0 || Boolean((product as any).thumbnailUrl) || Boolean((product as any).previewImageAssetId);
 
-export const hasDocuments = (product: Product) => (Array.isArray((product as any).attachments) ? (product as any).attachments.length : 0) > 0;
+export const hasDocuments = (product: Product) =>
+  typeof (product as any).hasDocument === 'boolean'
+    ? Boolean((product as any).hasDocument)
+    : (Array.isArray((product as any).attachments) ? (product as any).attachments.length : 0) > 0;
 
 export const hasMixedMedia = (product: Product) => hasImages(product) && hasDocuments(product);
 
@@ -218,7 +255,7 @@ const scoreImageForDisplay = (image: any) => {
   const descriptor = cleanText([image?.alt, image?.downloadUrl, image?.url].filter(Boolean).join(' ')).toLowerCase();
   let score = 0;
 
-  if (image?.isPrimary) score += 1000;
+  // isPrimary not used for scoring — Bluestone's API order doesn't match its UI display order
 
   for (const keyword of ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render']) {
     if (descriptor.includes(keyword)) score += 80;
@@ -237,7 +274,7 @@ const scoreImageForDisplay = (image: any) => {
 const scoreForMediaSource = (product: Product) => {
   const images = Array.isArray(product.images) ? product.images : [];
   const primaryImages = images.filter(image => Boolean(image?.isPrimary)).length;
-  const bestImageScore = images.reduce((best, image) => Math.max(best, scoreImageForDisplay(image)), Number.NEGATIVE_INFINITY);
+  const bestImageScore = images.reduce((best: number, image: ProductImage) => Math.max(best, scoreImageForDisplay(image)), Number.NEGATIVE_INFINITY);
   let value = Number.isFinite(bestImageScore) ? bestImageScore * 10 : 0;
   value += primaryImages * 120;
   value += images.length * 25;
@@ -526,27 +563,31 @@ export const buildCategoryLabelMap = (products: Product[]) => {
 };
 
 export const buildBrandOptions = (products: Product[]): BrandOption[] => {
-  const uniqueBrands = [...new Set(products.map(getProductBrand).map(cleanText).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, 'es')
-  );
-
-  return uniqueBrands.map(brand => ({
-    id: brand,
-    label: brand,
-    count: products.filter(product => cleanText(getProductBrand(product)) === brand).length,
-  }));
+  const countMap = new Map<string, number>();
+  for (const product of products) {
+    const brand = cleanText(getProductBrand(product));
+    if (brand) countMap.set(brand, (countMap.get(brand) ?? 0) + 1);
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'es'))
+    .map(([brand, count]) => ({ id: brand, label: brand, count }));
 };
 
 export const buildCategoryOptions = (products: Product[], categoryLabelMap: Record<string, string> = {}): CategoryOption[] => {
-  const uniqueCategoryIds = [...new Set(products.flatMap(product => (Array.isArray((product as any).categories) ? (product as any).categories : [])))]
-    .filter(Boolean)
-    .sort();
-
-  return uniqueCategoryIds.map((id, index) => ({
-    id,
-    label: categoryLabelMap[id] || `Categoría ${index + 1}`,
-    count: products.filter(product => (Array.isArray((product as any).categories) ? (product as any).categories : []).includes(id)).length,
-  }));
+  const countMap = new Map<string, number>();
+  for (const product of products) {
+    const categories: string[] = Array.isArray((product as any).categories) ? (product as any).categories : [];
+    for (const id of categories) {
+      if (id) countMap.set(id, (countMap.get(id) ?? 0) + 1);
+    }
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'es'))
+    .map(([id, count], index) => ({
+      id,
+      label: categoryLabelMap[id] || `Categoría ${index + 1}`,
+      count,
+    }));
 };
 
 const getCategoryParentLabel = (label: string) => {
@@ -642,15 +683,18 @@ export const buildTypeOptions = (products: Product[]): TypeOption[] => {
 };
 
 export const buildStatusOptions = (products: Product[]): StatusOption[] => {
-  const uniqueStatuses = [...new Set(products.map(product => normalizeStatusKey((product as any).state || (product as any).status)).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b, 'es')
-  );
-
-  return uniqueStatuses.map(status => ({
-    id: status,
-    label: getProductStatusLabel(status),
-    count: products.filter(product => normalizeStatusKey((product as any).state || (product as any).status) === status).length,
-  }));
+  const countMap = new Map<string, number>();
+  for (const product of products) {
+    const status = normalizeStatusKey((product as any).state || (product as any).status);
+    if (status) countMap.set(status, (countMap.get(status) ?? 0) + 1);
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'es'))
+    .map(([status, count]) => ({
+      id: status,
+      label: getProductStatusLabel(status),
+      count,
+    }));
 };
 
 export const filterProducts = (
@@ -658,6 +702,14 @@ export const filterProducts = (
   searchTerm: string,
   selectedName: string,
   selectedNumber: string,
+  selectedCollection: string,
+  selectedRange: string,
+  selectedPriceMin: string,
+  selectedPriceMax: string,
+  selectedEan: string,
+  selectedFlow: string,
+  selectedFinish: string,
+  selectedAttributeQuery: string,
   selectedBrand: string,
   selectedCategoryIds: string[],
   selectedType: string,
@@ -665,11 +717,19 @@ export const filterProducts = (
   selectedMediaFilter: MediaFilter,
   selectedQuickFilter: QuickFilter
 ) => {
-  let next = [...products];
+  let next = products;
 
   const normalizedName = cleanText(selectedName).trim();
   const normalizedNumber = cleanText(selectedNumber).trim();
+  const normalizedCollection = cleanText(selectedCollection).trim();
+  const normalizedRange = cleanText(selectedRange).trim();
+  const normalizedEan = cleanText(selectedEan).trim();
+  const normalizedFlow = cleanText(selectedFlow).trim();
+  const normalizedFinish = cleanText(selectedFinish).trim();
+  const normalizedAttributeQuery = cleanText(selectedAttributeQuery).trim();
   const normalizedSearch = cleanText(searchTerm).trim();
+  const minPrice = parseNumberish(selectedPriceMin);
+  const maxPrice = parseNumberish(selectedPriceMax);
 
   if (normalizedName) {
     const query = normalizedName.toLowerCase();
@@ -690,6 +750,68 @@ export const filterProducts = (
     });
   }
 
+  if (normalizedCollection) {
+    next = next.filter(product => matchesStructuredQuery([product.collection], normalizedCollection));
+  }
+
+  if (normalizedRange) {
+    next = next.filter(product => matchesStructuredQuery([product.range], normalizedRange));
+  }
+
+  if (normalizedEan) {
+    next = next.filter(product => matchesStructuredQuery([product.ean], normalizedEan));
+  }
+
+  if (normalizedFlow) {
+    next = next.filter(product => matchesStructuredQuery([product.flowRate], normalizedFlow));
+  }
+
+  if (normalizedFinish) {
+    next = next.filter(product =>
+      matchesStructuredQuery(
+        [
+          product.finish,
+          ...(Array.isArray(product.variants) ? product.variants.map(variant => getVariantFinishLabel(variant as Product)) : []),
+        ],
+        normalizedFinish
+      )
+    );
+  }
+
+  if (minPrice !== null || maxPrice !== null) {
+    next = next.filter(product => {
+      const price = parseNumberish(product.price);
+      if (price === null) return false;
+      if (minPrice !== null && price < minPrice) return false;
+      if (maxPrice !== null && price > maxPrice) return false;
+      return true;
+    });
+  }
+
+  if (normalizedAttributeQuery) {
+    next = next.filter(product => {
+      if (matchesStructuredQuery([(product as any).attributeText], normalizedAttributeQuery)) return true;
+
+      const attributes = Array.isArray(product.attributes)
+        ? product.attributes
+        : Object.entries(product.attributes || {}).map(([name, value]) => ({ name, value }));
+
+      return attributes.some((attribute: any) => {
+        return matchesStructuredQuery([
+          attribute.definitionName,
+          attribute.name,
+          attribute.label,
+          attribute.definitionId,
+          attribute.group,
+          attribute.groupName,
+          attribute.displayValue,
+          attribute.value,
+          attribute.values,
+        ], normalizedAttributeQuery);
+      });
+    });
+  }
+
   if (normalizedSearch) {
     const query = normalizedSearch.toLowerCase();
     next = next.filter(product => {
@@ -701,10 +823,11 @@ export const filterProducts = (
         product.category,
         product.type,
         ...(Array.isArray((product as any).categories) ? (product as any).categories : []),
-        ...(Array.isArray(product.images) ? product.images.map(image => image.alt || image.url || '') : []),
+        ...(Array.isArray(product.images) ? product.images.map((image: ProductImage) => image.alt || image.url || '') : []),
         ...(Array.isArray((product as any).attachments)
-          ? (product as any).attachments.map((attachment: any) => `${attachment.name || ''} ${attachment.type || ''}`)
+          ? (product as Product & { attachments?: ProductAttachment[] }).attachments!.map((attachment: ProductAttachment) => `${attachment.name || ''} ${attachment.type || ''}`)
           : []),
+        (product as any).attributeText,
         ...(Array.isArray(product.attributes)
           ? product.attributes.map((attr: any) => `${attr.definitionName || attr.name || attr.label || ''} ${attr.displayValue ?? attr.value ?? attr.values ?? ''}`)
           : Object.entries(product.attributes || {}).map(([name, value]) => `${name} ${value}`)),
@@ -712,7 +835,8 @@ export const filterProducts = (
         .join(' ')
         .toLowerCase();
 
-      return haystack.includes(query);
+      const tokens = query.split(/\s+/).filter(Boolean);
+      return tokens.every(token => haystack.includes(token));
     });
   }
 

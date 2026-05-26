@@ -1,4 +1,6 @@
-﻿import { CATALOG_SOURCE_MODE } from '../../../shared/config/catalogTenant';
+import { CATALOG_SOURCE_MODE } from '../../../shared/config/catalogTenant';
+import { supabase } from '../../../lib/supabase';
+import type { CatalogPageResponse, CatalogQueryParams } from '../model/catalogTypes';
 
 export interface ProductImage {
   id?: string;
@@ -13,6 +15,7 @@ export interface ProductAttribute {
   value: any;
   label?: string;
   definitionId?: string;
+  definitionNumber?: string;
   definitionName?: string;
   dataType?: string;
   group?: string;
@@ -34,8 +37,20 @@ export interface Product {
   name: string;
   description?: string;
   sku?: string;
+  number?: string;
   variantParentId?: string;
+  attributeText?: string;
+  previewImageAssetId?: string;
+  previewImageAlt?: string;
+  thumbnailUrl?: string;
+  thumbnailDownloadUrl?: string;
   price?: number;
+  weight?: number;
+  flowRate?: string;
+  ean?: string;
+  finish?: string;
+  collection?: string;
+  range?: string;
   currency?: string;
   images?: ProductImage[];
   attributes?: ProductAttribute[] | Record<string, any>;
@@ -44,21 +59,59 @@ export interface Product {
   category?: string;
   brand?: string;
   stock?: number;
+  hasImage?: boolean;
+  hasDocument?: boolean;
+  hasAsset?: boolean;
+  variants?: Record<string, unknown>[];
   [key: string]: any;
 }
 
-const PRODUCT_CACHE = new Map<string, Product[]>();
-const CATALOG_REQUEST_TIMEOUT_MS = 15000;
-const CATALOG_REQUEST_ATTEMPTS = 3;
-const RETRY_BACKOFF_MS = 2000;
+type CacheEntry = { data: CatalogPageResponse; ts: number };
 
-export const getCachedProducts = (tenantId: string): Product[] | null => {
-  const cached = PRODUCT_CACHE.get(tenantId);
-  return cached ? [...cached] : null;
+const PRODUCT_CACHE = new Map<string, CacheEntry>();
+const PRODUCT_CACHE_TTL_MS = 5 * 60 * 1000;
+const CATALOG_REQUEST_TIMEOUT_MS = 25_000;
+const CATALOG_REQUEST_ATTEMPTS = 3;
+const RETRY_BACKOFF_MS = 1_500;
+
+const buildCatalogQueryKey = (query: CatalogQueryParams) =>
+  JSON.stringify({
+    tenantId: query.tenantId,
+    page: query.page,
+    pageSize: query.pageSize,
+    sortBy: query.sortBy,
+    searchTerm: query.searchTerm,
+    selectedName: query.selectedName,
+    selectedNumber: query.selectedNumber,
+    selectedCollection: query.selectedCollection,
+    selectedRange: query.selectedRange,
+    selectedPriceMin: query.selectedPriceMin,
+    selectedPriceMax: query.selectedPriceMax,
+    selectedEan: query.selectedEan,
+    selectedFlow: query.selectedFlow,
+    selectedFinish: query.selectedFinish,
+    selectedAttributeQuery: query.selectedAttributeQuery,
+    selectedBrand: query.selectedBrand,
+    selectedCategory: query.selectedCategory,
+    selectedType: query.selectedType,
+    selectedStatus: query.selectedStatus,
+    selectedMediaFilter: query.selectedMediaFilter,
+    selectedQuickFilter: query.selectedQuickFilter,
+  });
+
+export const getCachedCatalogPage = (query: CatalogQueryParams): CatalogPageResponse | null => {
+  const cacheKey = buildCatalogQueryKey(query);
+  const entry = PRODUCT_CACHE.get(cacheKey);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > PRODUCT_CACHE_TTL_MS) {
+    PRODUCT_CACHE.delete(cacheKey);
+    return null;
+  }
+  return entry.data;
 };
 
-export const setCachedProducts = (tenantId: string, products: Product[]) => {
-  PRODUCT_CACHE.set(tenantId, [...products]);
+export const setCachedCatalogPage = (query: CatalogQueryParams, response: CatalogPageResponse) => {
+  PRODUCT_CACHE.set(buildCatalogQueryKey(query), { data: response, ts: Date.now() });
 };
 
 const cleanText = (value: unknown) => {
@@ -78,7 +131,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const fetchWithTimeout = async (input: RequestInfo | URL, init: RequestInit, timeoutMs = CATALOG_REQUEST_TIMEOUT_MS) => {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => controller.abort(new Error(`Catalog request timeout after ${timeoutMs}ms`)), timeoutMs);
 
   try {
     return await fetch(input, {
@@ -288,6 +341,7 @@ const normalizeLegacyProduct = (raw: any): Product => {
 
         return {
           definitionId: cleanText(attribute.definitionId || ''),
+          definitionNumber: cleanText(attribute.definitionNumber || attribute.number || ''),
           name: cleanText(attribute.definitionName || attribute.name || attribute.label || attribute.definitionId || 'Atributo'),
           label: cleanText(attribute.groupName || attribute.group || ''),
           group: cleanText(attribute.groupName || attribute.group || ''),
@@ -312,6 +366,18 @@ const normalizeLegacyProduct = (raw: any): Product => {
     description: cleanText(metadataDescription || extractLocalizedValue(raw.description) || ''),
     sku: cleanText(metadataNumber || raw.number || raw.sku || ''),
     variantParentId: cleanText(metadata.variantParentId || raw.variantParentId || ''),
+    attributeText: cleanText(raw.attributeText || ''),
+    previewImageAssetId: cleanText(raw.previewImageAssetId || ''),
+    previewImageAlt: cleanText(raw.previewImageAlt || ''),
+    thumbnailUrl: cleanText(raw.thumbnailUrl || prioritizedImages[0]?.url || ''),
+    thumbnailDownloadUrl: cleanText(raw.thumbnailDownloadUrl || prioritizedImages[0]?.downloadUrl || ''),
+    price: typeof raw.price === 'number' ? raw.price : undefined,
+    weight: typeof raw.weight === 'number' ? raw.weight : undefined,
+    flowRate: cleanText(raw.flowRate || ''),
+    ean: cleanText(raw.ean || ''),
+    finish: cleanText(raw.finish || raw.finishName || ''),
+    collection: cleanText(raw.collection || ''),
+    range: cleanText(raw.range || raw.gama || ''),
     images: prioritizedImages,
     attachments,
     assets,
@@ -320,6 +386,9 @@ const normalizeLegacyProduct = (raw: any): Product => {
     category: cleanText(metadataType || raw.type || 'Sin categoría'),
     brand: cleanText(metadataBrand || raw.brand || raw.manufacturer || raw.vendor || ''),
     stock: typeof raw.stock === 'number' ? raw.stock : undefined,
+    hasImage: typeof raw.hasImage === 'boolean' ? raw.hasImage : prioritizedImages.length > 0 || Boolean(raw.previewImageAssetId),
+    hasDocument: typeof raw.hasDocument === 'boolean' ? raw.hasDocument : attachments.length > 0,
+    hasAsset: typeof raw.hasAsset === 'boolean' ? raw.hasAsset : prioritizedImages.length > 0 || attachments.length > 0 || assets.length > 0,
     type: cleanText(metadataType || raw.type || ''),
     number: cleanText(metadataNumber || raw.number || ''),
     state: metadata.state || raw.state,
@@ -333,7 +402,47 @@ const loadLocalFallbackProducts = async () => {
   return loadLocalProducts(normalizeLegacyProduct);
 };
 
-export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
+const getAuthHeaders = async (): Promise<Record<string, string>> => {
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+};
+
+const buildLocalCatalogResponse = async (query: CatalogQueryParams): Promise<CatalogPageResponse> => {
+  const products = await loadLocalFallbackProducts();
+  return {
+    products,
+    meta: {
+      currentPage: 1,
+      pageSize: products.length || query.pageSize,
+      totalPages: 1,
+      totalCatalogCount: products.length,
+      filteredGroupCount: products.length,
+      totalRawProductCount: products.length,
+      categoryLabelMap: {},
+      brandOptions: [],
+      rangeOptions: [],
+      flowOptions: [],
+      finishOptions: [],
+      priceRange: { min: 0, max: 0 },
+      categoryTree: [],
+      typeOptions: [],
+      statusOptions: [],
+      imageCount: products.reduce((sum, product) => sum + (product.images?.length || 0), 0),
+      attachmentCount: products.reduce((sum, product) => sum + (product.attachments?.length || 0), 0),
+      assetCount: products.filter(product => (product.images?.length || 0) + (product.attachments?.length || 0) > 0).length,
+      withImagesCount: products.filter(product => (product.images?.length || 0) > 0).length,
+      withDocumentsCount: products.filter(product => (product.attachments?.length || 0) > 0).length,
+      mixedMediaCount: products.filter(product => (product.images?.length || 0) > 0 && (product.attachments?.length || 0) > 0).length,
+    },
+  };
+};
+
+export const fetchCatalogPage = async (query: CatalogQueryParams): Promise<CatalogPageResponse> => {
   const allowLocalSampleInDev = import.meta.env.DEV && CATALOG_SOURCE_MODE !== 'remote';
   const shouldUseRemoteCatalog = import.meta.env.PROD || CATALOG_SOURCE_MODE === 'remote';
 
@@ -341,34 +450,67 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
     if (import.meta.env.PROD) {
       throw new Error('Production catalog must use remote Bluestone data');
     }
-    return loadLocalFallbackProducts();
+    return buildLocalCatalogResponse(query);
   }
 
-  const apiUrl = `/api/catalog?tenant=${encodeURIComponent(tenantId)}`;
+  const apiUrl = `/api/catalog?${new URLSearchParams({
+    tenant: query.tenantId,
+    page: String(query.page),
+    pageSize: String(query.pageSize),
+    sortBy: query.sortBy,
+    searchTerm: query.searchTerm,
+    selectedName: query.selectedName,
+    selectedNumber: query.selectedNumber,
+    selectedCollection: query.selectedCollection,
+    selectedRange: query.selectedRange,
+    selectedPriceMin: query.selectedPriceMin,
+    selectedPriceMax: query.selectedPriceMax,
+    selectedEan: query.selectedEan,
+    selectedFlow: query.selectedFlow,
+    selectedFinish: query.selectedFinish,
+    selectedAttributeQuery: query.selectedAttributeQuery,
+    selectedBrand: query.selectedBrand,
+    selectedCategory: query.selectedCategory,
+    selectedType: query.selectedType,
+    selectedStatus: query.selectedStatus,
+    selectedMediaFilter: query.selectedMediaFilter,
+    selectedQuickFilter: query.selectedQuickFilter,
+  }).toString()}`;
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= CATALOG_REQUEST_ATTEMPTS; attempt += 1) {
     try {
-      const response = await fetchWithTimeout(apiUrl, {
+      const authHeaders = await getAuthHeaders();
+      let response = await fetchWithTimeout(apiUrl, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json', ...authHeaders },
       });
+
+      if (response.status === 401) {
+        await supabase.auth.refreshSession();
+        const freshHeaders = await getAuthHeaders();
+        response = await fetchWithTimeout(apiUrl, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json', ...freshHeaders },
+        });
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+        throw new Error(errorData.message || errorData.error || `HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
-      const products = Array.isArray(data) ? data : data.products || data.data || data.items || data.results || [];
-
-      if (!Array.isArray(products)) {
-        return [];
+      const rawProducts = Array.isArray(data) ? data : data.products || data.data || data.items || data.results || [];
+      const meta = data?.meta;
+      if (!Array.isArray(rawProducts) || !meta) {
+        throw new Error('Catalog response is missing products or metadata');
       }
 
-      return products.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name));
+      return {
+        products: rawProducts.map(normalizeLegacyProduct).filter(product => Boolean(product.id && product.name)),
+        meta,
+      };
     } catch (error) {
       lastError = error;
       if (attempt < CATALOG_REQUEST_ATTEMPTS) {
@@ -378,8 +520,61 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
   }
 
   if (allowLocalSampleInDev) {
-    return loadLocalFallbackProducts();
+    return buildLocalCatalogResponse(query);
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Error desconocido al cargar productos');
+  throw lastError instanceof Error ? lastError : new Error('Error desconocido al cargar el catálogo');
+};
+
+export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
+  const response = await fetchCatalogPage({
+    tenantId,
+    page: 1,
+    pageSize: 30,
+    sortBy: 'relevance',
+    searchTerm: '',
+    selectedName: '',
+    selectedNumber: '',
+    selectedCollection: '',
+    selectedRange: '',
+    selectedPriceMin: '',
+    selectedPriceMax: '',
+    selectedEan: '',
+    selectedFlow: '',
+    selectedFinish: '',
+    selectedAttributeQuery: '',
+    selectedBrand: 'all',
+    selectedCategory: 'all',
+    selectedType: 'all',
+    selectedStatus: 'all',
+    selectedMediaFilter: 'all',
+    selectedQuickFilter: 'all',
+  });
+  return response.products;
+};
+
+export const fetchProductDetail = async (tenantId: string, productId: string): Promise<Product> => {
+  const authHeaders = await getAuthHeaders();
+  let response = await fetchWithTimeout(`/api/catalog?tenant=${encodeURIComponent(tenantId)}&productId=${encodeURIComponent(productId)}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
+  });
+
+  if (response.status === 401) {
+    await supabase.auth.refreshSession();
+    const freshHeaders = await getAuthHeaders();
+    response = await fetchWithTimeout(`/api/catalog?tenant=${encodeURIComponent(tenantId)}&productId=${encodeURIComponent(productId)}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', ...freshHeaders },
+    });
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const raw = data?.data ?? data?.product ?? data;
+  return normalizeLegacyProduct(raw);
 };
