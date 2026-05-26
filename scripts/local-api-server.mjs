@@ -17,7 +17,12 @@ const DEFAULT_TENANT = 'default';
 const definitionCache = new Map();
 const catalogCache = new Map();
 const CATALOG_CACHE_TTL_MS = 10 * 60 * 1000;
+const CATALOG_DISK_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
+const DEFAULT_PAGE_SIZE = 30;
+const MAX_PAGE_SIZE = 120;
 const organizationSettingsPath = path.join(rootDir, '.content-store-data', 'organization-settings.json');
+const catalogDiskCachePath = path.join(rootDir, '.content-store-data', 'catalog-cache.json');
 const localProductsPath = path.join(rootDir, 'src', 'dev', 'all-products-cursor.json');
 const organizationSettingsCache = new Map();
 let localProductsCache = null;
@@ -59,6 +64,37 @@ const persistOrganizationSettings = async () => {
   await fs.writeFile(organizationSettingsPath, JSON.stringify(payload, null, 2), 'utf8');
 };
 
+const loadCatalogCacheFromDisk = async () => {
+  try {
+    const raw = await fs.readFile(catalogDiskCachePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    let loaded = 0;
+    for (const [key, entry] of Object.entries(parsed)) {
+      if (entry?.data && typeof entry.fetchedAt === 'number' && Date.now() - entry.fetchedAt < CATALOG_DISK_CACHE_TTL_MS) {
+        catalogCache.set(key, {
+          ...entry,
+          meta: entry.meta && typeof entry.meta === 'object' ? entry.meta : buildCatalogBaseMeta(entry.data),
+        });
+        loaded += 1;
+      }
+    }
+    if (loaded) console.log(`[catalog-cache] Cargado desde disco: ${loaded} tenant(s)`);
+  } catch {
+    // archivo inexistente o corrupto — se regenera en el primer request
+  }
+};
+
+const persistCatalogCacheToDisk = async () => {
+  try {
+    await ensureStorageDir();
+    const payload = Object.fromEntries(catalogCache.entries());
+    await fs.writeFile(catalogDiskCachePath, JSON.stringify(payload), 'utf8');
+  } catch (error) {
+    console.warn('[catalog-cache] Error al persistir en disco:', error?.message);
+  }
+};
+
 const loadLocalProducts = async () => {
   if (localProductsCache) return localProductsCache;
 
@@ -69,6 +105,7 @@ const loadLocalProducts = async () => {
 };
 
 void loadOrganizationSettings();
+void loadCatalogCacheFromDisk();
 
 const parsePublicOrganizations = () => {
   const rawPublic = process.env.VITE_CATALOG_TENANTS_JSON;
@@ -147,6 +184,11 @@ const cleanText = (value) => {
   }
 };
 
+const normalizeKey = (value) => cleanText(value).trim().toLowerCase();
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const compareStrings = (a, b) =>
+  String(a || '').localeCompare(String(b || ''), 'es', { sensitivity: 'base', numeric: true });
+
 const extractTextCandidates = (value, preferredLocales = ['es', 'en']) => {
   if (value === null || value === undefined) return '';
 
@@ -204,6 +246,938 @@ const normalizeDefinition = (definition) => {
     group: definition.group ? cleanText(definition.group) : null,
     dataType: definition.dataType ? cleanText(definition.dataType) : undefined,
   };
+};
+
+const enrichAttributes = (attributes, definitionMap) =>
+  (Array.isArray(attributes) ? attributes : []).map(attribute => {
+    const source = typeof attribute === 'object' && attribute !== null ? attribute : {};
+    const definitionId = String(source.definitionId || '');
+    const definition = definitionMap.get(definitionId);
+    const rawValue = source.value ?? source.values;
+    const displayValue = formatAttributeValue(rawValue);
+
+    return {
+      definitionId,
+      definitionNumber: cleanText(source.number || source.definitionNumber || definition?.number || ''),
+      definitionName: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
+      name: cleanText(source.definitionName || source.name || source.label || definition?.name || definitionId || 'Atributo'),
+      group: cleanText(definition?.group || source.groupName || source.group || ''),
+      dataType: cleanText(definition?.dataType || source.dataType || ''),
+      value: displayValue,
+      displayValue,
+      rawValue,
+      readOnly: Boolean(source.readOnly),
+    };
+  });
+
+const extractPreviewAssetIds = (product, maxAssets = CATALOG_PREVIEW_ASSETS_PER_PRODUCT) => {
+  if (!Array.isArray(product?.assets)) return [];
+  return product.assets
+    .map(asset => String(asset).trim())
+    .filter(Boolean)
+    .slice(0, maxAssets);
+};
+
+const buildAttributeSearchText = (attributes) =>
+  attributes
+    .map(attribute =>
+      [
+        attribute?.definitionName,
+        attribute?.name,
+        attribute?.group,
+        attribute?.dataType,
+        attribute?.displayValue,
+        attribute?.value,
+      ]
+        .map(value => cleanText(value).trim())
+        .filter(Boolean)
+        .join(' ')
+    )
+    .filter(Boolean)
+    .join(' ');
+
+const ATTRIBUTE_KEYSETS = {
+  collection: ['collection', 'coleccion', 'colección'],
+  range: ['range', 'gama'],
+  ean: ['ean', 'gtin', 'codigoean', 'códigoean', 'codigo ean', 'código ean'],
+  flowRate: ['692d69b4f8de9bb8df7818d5', 'caudal', 'flow rate', 'flowrate', 'l/min', 'l min'],
+  finish: ['692962777118d05218bb7788', 'finish', 'acabado', 'acabados tres', 'color'],
+  price: ['price', 'precio', 'pvp'],
+  weight: ['weight', 'peso'],
+};
+
+const matchesAttributeKey = (attribute, keys) => {
+  const haystack = [
+    attribute?.definitionName,
+    attribute?.name,
+    attribute?.label,
+    attribute?.definitionId,
+    attribute?.definitionNumber,
+    attribute?.group,
+  ]
+    .map(value => normalizeKey(value))
+    .filter(Boolean);
+
+  return haystack.some(value =>
+    keys.some(key => {
+      const normalizedKey = normalizeKey(key);
+      return value === normalizedKey || value.startsWith(normalizedKey);
+    })
+  );
+};
+
+const findAttributeRecord = (attributes, keys) => {
+  if (!Array.isArray(attributes)) return null;
+  return attributes.find(attribute => matchesAttributeKey(attribute, keys)) || null;
+};
+
+const parseNumberish = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const match = cleanText(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  return match ? Number(match[0]) : null;
+};
+
+const getAttributeText = (attributes, keys) =>
+  cleanText(
+    findAttributeRecord(attributes, keys)?.displayValue ??
+      findAttributeRecord(attributes, keys)?.value ??
+      findAttributeRecord(attributes, keys)?.values ??
+      ''
+  ).trim() || null;
+
+const getAttributeNumber = (attributes, keys) => parseNumberish(getAttributeText(attributes, keys));
+
+const tokenizeSearch = (value) =>
+  cleanText(value)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .map(token => token.trim())
+    .filter(token => token.length > 1);
+
+const matchesStructuredQuery = (values, query) => {
+  const queryTokens = tokenizeSearch(query);
+  if (!queryTokens.length) return false;
+  const haystackTokens = values.flatMap(value => tokenizeSearch(value));
+  if (!haystackTokens.length) return false;
+  return queryTokens.every(queryToken =>
+    haystackTokens.some(token => token === queryToken || token.startsWith(queryToken))
+  );
+};
+
+const normalizeCatalogProduct = (product, media, attributes) => {
+  const metadata = product?.metadata || {};
+  const metadataName = extractLocalizedValue(metadata?.name);
+  const metadataDescription = extractLocalizedValue(metadata?.description);
+  const metadataNumber = extractLocalizedValue(metadata?.number);
+  const metadataType = extractLocalizedValue(metadata?.type);
+  const metadataBrand = extractLocalizedValue(
+    metadata?.brand || metadata?.manufacturer || metadata?.vendor || metadata?.publisher
+  );
+
+  const includeAttributes = product?.__includeAttributes !== false;
+  const assetIds = Array.isArray(product?.__assetIds) ? product.__assetIds : extractPreviewAssetIds(product);
+  const collection = getAttributeText(attributes, ['collection', 'coleccion', 'colección']);
+  const range = getAttributeText(attributes, ['69f1c5af54e43fd1f8a009f1', 'range', 'gama']);
+  const ean = getAttributeText(attributes, ['69f1c5af4f379fb27d452d06', 'ean', 'gtin', 'codigoean', 'códigoean', 'codigo ean', 'código ean']);
+  const flowRate = getAttributeText(attributes, ['692d69b4f8de9bb8df7818d5', '6995d02329297e5aaf6e7796', 'caudal', 'flow rate', 'flowrate', 'l/min', 'l min']);
+  const finish = getAttributeText(attributes, ['692962777118d05218bb7788', '6995d022fc7f3f7a6325fb21', 'acabado', 'acabados tres', 'acabados']);
+  const price = getAttributeNumber(attributes, ['69297107f8de9bb8df77a29b', 'price', 'precio', 'pvp']);
+  const weight = getAttributeNumber(attributes, ATTRIBUTE_KEYSETS.weight);
+  return {
+    id: String(product?.id || product?._id || metadata?.id || metadata?.number || ''),
+    name: cleanText(metadataName || product?.name || product?.title || product?.description || 'Producto'),
+    description: cleanText(metadataDescription || extractLocalizedValue(product?.description) || ''),
+    sku: cleanText(metadataNumber || product?.number || product?.sku || ''),
+    number: cleanText(metadataNumber || product?.number || ''),
+    variantParentId: cleanText(metadata?.variantParentId || product?.variantParentId || ''),
+    images: media.images,
+    attachments: media.attachments,
+    previewImageAssetId: media.images[0]?.id ?? assetIds[0],
+    assets: assetIds,
+    collection,
+    range,
+    ean,
+    flowRate,
+    finish,
+    price,
+    weight,
+    attributes: includeAttributes ? attributes : [],
+    attributeText: buildAttributeSearchText(attributes),
+    categories: Array.isArray(product?.categories) ? product.categories.map(category => String(category)).filter(Boolean) : [],
+    category: cleanText(metadataType || product?.type || 'Sin categoría'),
+    brand: cleanText(metadataBrand || product?.brand || product?.manufacturer || product?.vendor || ''),
+    stock: typeof product?.stock === 'number' ? product.stock : undefined,
+    type: cleanText(metadataType || product?.type || ''),
+    state: normalizeStatusKey(metadata?.state || product?.state),
+    publicationState: normalizeStatusKey(metadata?.publicationState || product?.publicationState),
+    lastUpdate: metadata?.lastUpdate || product?.lastUpdate,
+    updatedAt: metadata?.updatedAt || product?.updatedAt,
+    createDate: metadata?.createDate || product?.createDate,
+    updatedBy: metadata?.updatedBy || product?.updatedBy,
+    lastUpdatedBy: metadata?.lastUpdatedBy || product?.lastUpdatedBy,
+    authorEmail: metadata?.authorEmail || product?.authorEmail,
+    variants: Array.isArray(product?.variants) ? product.variants : [],
+    relations: Array.isArray(product?.relations) ? product.relations : [],
+  };
+};
+
+const getProductBrand = (product) => {
+  const candidates = [
+    product?.brand,
+    product?.manufacturer,
+    product?.vendor,
+    product?.publisher,
+    product?.metadata?.brand,
+  ];
+
+  for (const candidate of candidates) {
+    const text = cleanText(candidate).trim();
+    if (text) return text;
+  }
+
+  const attributes = Array.isArray(product?.attributes)
+    ? product.attributes
+    : Object.entries(product?.attributes || {}).map(([name, value]) => ({ name, value }));
+
+  const brandAttribute = attributes.find(attribute => {
+    const name = normalizeKey(attribute?.name || attribute?.label || attribute?.definitionName || attribute?.definitionId || '');
+    return name.includes('marca') || name.includes('brand') || name.includes('fabricante') || name.includes('vendor');
+  });
+
+  return cleanText(brandAttribute?.value ?? brandAttribute?.values ?? brandAttribute?.displayValue).trim();
+};
+
+const getProductTypeLabel = (type) => {
+  const normalized = normalizeKey(type);
+  if (normalized === 'group') return 'Grupo';
+  if (normalized === 'single') return 'Simple';
+  if (normalized === 'variant') return 'Con acabados';
+  if (normalized === 'bundle') return 'Bundle';
+  return cleanText(type).trim() || 'Sin tipo';
+};
+
+const normalizeStatusKey = (value) => {
+  const normalized = normalizeKey(value);
+  if (!normalized) return '';
+  if (normalized.includes('playground') || normalized.includes('sandbox') || normalized.includes('test')) return 'draft';
+  if (normalized.includes('draft') || normalized.includes('borrador')) return 'draft';
+  if (normalized.includes('publish') || normalized.includes('published') || normalized.includes('public')) return 'published';
+  if (normalized.includes('review') || normalized.includes('pending') || normalized.includes('to be published')) return 'to-be-published';
+  if (normalized.includes('archive') || normalized.includes('archiv')) return 'archived';
+  return normalized;
+};
+
+const getProductStatusLabel = (status) => {
+  const normalized = normalizeStatusKey(status);
+  if (normalized === 'draft') return 'Borrador';
+  if (normalized === 'to-be-published') return 'Por publicar';
+  if (normalized === 'published') return 'Publicado';
+  if (normalized === 'archived') return 'Archivado';
+  return cleanText(status).trim() || 'Sin estado';
+};
+
+const hasAssets = (product) => {
+  const images = Array.isArray(product?.images) ? product.images.length : 0;
+  const attachments = Array.isArray(product?.attachments) ? product.attachments.length : 0;
+  const assets = Array.isArray(product?.assets) ? product.assets.length : 0;
+  return images > 0 || attachments > 0 || assets > 0;
+};
+
+const hasImages = (product) =>
+  (product?.images?.length || 0) > 0 || Boolean(product?.previewImageAssetId);
+
+const hasDocuments = (product) => (Array.isArray(product?.attachments) ? product.attachments.length : 0) > 0;
+const hasMixedMedia = (product) => hasImages(product) && hasDocuments(product);
+const hasCategories = (product) =>
+  Array.isArray(product?.categories) ? product.categories.length > 0 : Boolean(product?.category);
+
+const getVariantParentId = (product) =>
+  cleanText(product?.variantParentId || product?.metadata?.variantParentId || '').trim();
+
+const isTestProduct = (product) => {
+  const haystack = [
+    product?.id,
+    product?.name,
+    product?.sku,
+    product?.number,
+    product?.metadata?.name,
+    product?.metadata?.number,
+  ]
+    .map(value => normalizeKey(value).toUpperCase())
+    .join(' ');
+
+  return /\bTEST[_\s-]|DEBUG|PLAYGROUND\b/i.test(haystack) || /(^|[\s/_-])test($|[\s/_-])/i.test(haystack);
+};
+
+const scoreForRepresentative = (product) => {
+  let value = 0;
+  if (hasImages(product)) value += 200;
+  if (hasDocuments(product)) value += 100;
+  if (hasAssets(product)) value += 20;
+  value += Math.min((product?.images?.length || 0) + (product?.attachments?.length || 0), 9);
+  value += cleanText(product?.name).length ? 1 : 0;
+  return value;
+};
+
+const scoreForMediaSource = (product) => {
+  const images = Array.isArray(product?.images) ? product.images : [];
+  const primaryImages = images.filter(image => Boolean(image?.isPrimary)).length;
+  const bestImageScore = images.reduce((best, image) => Math.max(best, scoreImageByFileName(image)), Number.NEGATIVE_INFINITY);
+  let value = Number.isFinite(bestImageScore) ? bestImageScore * 10 : 0;
+  value += primaryImages * 120;
+  value += images.length * 25;
+  value += hasDocuments(product) ? 10 : 0;
+  value += hasAssets(product) ? 5 : 0;
+  value += normalizeKey(product?.type) === 'group' ? 20 : 0;
+  return value;
+};
+
+const getProductUpdatedAt = (product) => {
+  const raw = product?.updatedAt || product?.lastUpdate || product?.createDate || '';
+  const time = Date.parse(String(raw));
+  return Number.isNaN(time) ? 0 : time;
+};
+
+const getProductVariantCount = (product) =>
+  Array.isArray(product?.variants) ? product.variants.length : 0;
+
+const getRelevanceScore = (product) => {
+  let score = 0;
+  if ((product?.images?.length || 0) > 0 || product?.previewImageAssetId) score += 1000;
+  if (hasDocuments(product)) score += 120;
+  if (hasAssets(product)) score += 40;
+  if (getProductVariantCount(product) > 0) score += 20;
+  score += Math.min((product?.images?.length || 0) * 10, 90);
+  score += getProductUpdatedAt(product) > 0 ? 5 : 0;
+  return score;
+};
+
+const sortCatalogProducts = (products, sortBy) => {
+  const next = [...products];
+  switch (sortBy) {
+    case 'name_asc':
+      return next.sort((a, b) => compareStrings(a?.name, b?.name));
+    case 'name_desc':
+      return next.sort((a, b) => compareStrings(b?.name, a?.name));
+    case 'sku_asc':
+      return next.sort((a, b) => compareStrings(a?.sku || a?.number, b?.sku || b?.number));
+    case 'updated_desc':
+      return next.sort((a, b) => getProductUpdatedAt(b) - getProductUpdatedAt(a) || compareStrings(a?.name, b?.name));
+    case 'variants_desc':
+      return next.sort((a, b) => getProductVariantCount(b) - getProductVariantCount(a) || compareStrings(a?.name, b?.name));
+    case 'relevance':
+    default:
+      return next.sort((a, b) => getRelevanceScore(b) - getRelevanceScore(a) || compareStrings(a?.name, b?.name));
+  }
+};
+
+const groupProductsForDisplay = (products) => {
+  const buckets = new Map();
+  const groupRootsById = new Map();
+  const groupRootsByPrefix = new Map();
+
+  const getNumberValue = product => cleanText(product?.number || product?.sku || product?.id).trim();
+  const getDisplayName = product => cleanText(product?.name).trim().toLowerCase();
+  const extractVariantPrefix = (value) => {
+    const normalized = cleanText(value).trim();
+    if (!normalized) return '';
+
+    const numericPrefixMatch = normalized.match(/^(\d{4,})/);
+    if (numericPrefixMatch) return numericPrefixMatch[1];
+
+    const alphanumericPrefixMatch = normalized.match(/^([A-Za-z0-9]{4,}?)(?:[-_ ]?[A-Za-z]+|\s+[A-Za-z]+)?$/);
+    return alphanumericPrefixMatch?.[1] || '';
+  };
+
+  for (const product of products) {
+    if (normalizeKey(product?.type) !== 'group') continue;
+    const numberValue = getNumberValue(product);
+    const prefix = extractVariantPrefix(numberValue);
+    if (!groupRootsById.has(product.id)) groupRootsById.set(product.id, product);
+    if (prefix && !groupRootsByPrefix.has(prefix)) groupRootsByPrefix.set(prefix, product);
+    if (numberValue && !groupRootsByPrefix.has(numberValue)) groupRootsByPrefix.set(numberValue, product);
+  }
+
+  for (const product of products) {
+    const typeKey = normalizeKey(product?.type);
+    const parentId = getVariantParentId(product);
+    const numberValue = getNumberValue(product);
+    const prefix = extractVariantPrefix(numberValue);
+    const matchedRoot =
+      (parentId && groupRootsById.get(parentId)) ||
+      (prefix && groupRootsByPrefix.get(prefix)) ||
+      (numberValue && groupRootsByPrefix.get(numberValue)) ||
+      null;
+    const bucketId =
+      typeKey === 'group'
+        ? `group:${product.id}`
+        : typeKey === 'variant' && parentId
+          ? `group:${parentId}`
+          : matchedRoot
+            ? `group:${matchedRoot.id}`
+            : `single:${product.id}`;
+
+    if (!buckets.has(bucketId)) {
+      buckets.set(bucketId, { id: bucketId, representative: null, members: [], syntheticKey: null });
+    }
+
+    const bucket = buckets.get(bucketId);
+    bucket.members.push(product);
+    if (typeKey === 'group') bucket.representative = product;
+  }
+
+  const orphanSinglesBySignature = new Map();
+  for (const bucket of buckets.values()) {
+    if (bucket.id.startsWith('group:') || bucket.members.length !== 1) continue;
+    const [single] = bucket.members;
+    const numberValue = getNumberValue(single);
+    const prefix = extractVariantPrefix(numberValue);
+    if (!prefix) continue;
+    const signature = `${prefix}:${getDisplayName(single)}`;
+    if (!orphanSinglesBySignature.has(signature)) orphanSinglesBySignature.set(signature, []);
+    orphanSinglesBySignature.get(signature).push(single);
+  }
+
+  for (const [signature, members] of orphanSinglesBySignature.entries()) {
+    if (members.length < 2) continue;
+    const bucketId = `synthetic:${signature}`;
+    buckets.set(bucketId, { id: bucketId, representative: null, members, syntheticKey: signature });
+    for (const member of members) {
+      buckets.delete(`single:${member.id}`);
+    }
+  }
+
+  return [...buckets.values()]
+    .map(bucket => {
+      const sortedMembers = [...bucket.members].sort(
+        (a, b) => scoreForRepresentative(b) - scoreForRepresentative(a) || compareStrings(a?.name, b?.name)
+      );
+      const representative = bucket.representative || sortedMembers[0] || null;
+      if (!representative) return null;
+
+      const variants = bucket.members
+        .filter(product => product.id !== representative.id)
+        .sort((a, b) => scoreForRepresentative(b) - scoreForRepresentative(a) || compareStrings(a?.name, b?.name));
+      const mediaSource =
+        [...bucket.members].sort(
+          (a, b) => scoreForMediaSource(b) - scoreForMediaSource(a) || scoreForRepresentative(b) - scoreForRepresentative(a)
+        )[0] || representative;
+
+      return {
+        ...representative,
+        name: cleanText(representative.name || bucket.members[0]?.name || 'Producto'),
+        images: mediaSource?.images || representative.images,
+        attachments: mediaSource?.attachments || representative.attachments,
+        assets: mediaSource?.assets || representative.assets,
+        variants,
+        variantCount: variants.length,
+        variantGroupId: bucket.id,
+        isVariantGroup: variants.length > 0,
+      };
+    })
+    .filter(Boolean);
+};
+
+const CATEGORY_STOP_WORDS = new Set([
+  'de', 'del', 'la', 'el', 'los', 'las', 'y', 'o', 'a', 'en', 'para', 'con', 'sin',
+  'kit', 'kits', 'compo', 'mndo', 'mundo', 'mn', 'emp', 'empotrado', 'empotrada',
+  'empotrados', 'empotradas', 'sal', 'recto', 'caño', 'cano', 'caña', 'cana', 'repisa',
+  'completo', 'completa', 'comple', 'grupo', 'single', 'variant', 'variante', 'dcha',
+  'izq', 'izquierda', 'derecha', 'solo', 'home', 'standard', 'playground_only', 'playground',
+]);
+
+const titleCase = (value) =>
+  value
+    .toLowerCase()
+    .replace(/(^|\s|[-_/])\p{L}/gu, letter => letter.toUpperCase());
+
+const slugify = (value) =>
+  cleanText(value)
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '');
+
+const normalizeCategoryToken = (value) =>
+  cleanText(value)
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .toLowerCase();
+
+const getMeaningfulTokens = (value) =>
+  normalizeCategoryToken(value)
+    .split(/\s+/)
+    .filter(token => token.length > 2 && !CATEGORY_STOP_WORDS.has(token));
+
+const buildCategoryPhrase = (productNames) => {
+  const phraseCount = new Map();
+  const tokenCount = new Map();
+
+  for (const name of productNames) {
+    const tokens = getMeaningfulTokens(name);
+    if (!tokens.length) continue;
+    const candidate = tokens.slice(0, 2).join(' ');
+    if (candidate) phraseCount.set(candidate, (phraseCount.get(candidate) || 0) + 1);
+    for (const token of tokens) tokenCount.set(token, (tokenCount.get(token) || 0) + 1);
+  }
+
+  const bestPhrase = [...phraseCount.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (bestPhrase && bestPhrase[1] > 1) return titleCase(bestPhrase[0]);
+
+  const bestTokens = [...tokenCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([token]) => token)
+    .slice(0, 2);
+
+  return bestTokens.length ? titleCase(bestTokens.join(' ')) : 'Sin categoría';
+};
+
+const buildCategoryLabelMap = (products) => {
+  const grouped = new Map();
+  for (const product of products) {
+    const categoryIds = Array.isArray(product?.categories) ? product.categories : [];
+    for (const categoryId of categoryIds) {
+      if (!grouped.has(categoryId)) grouped.set(categoryId, []);
+      grouped.get(categoryId).push(cleanText(product?.name));
+    }
+  }
+
+  const labelMap = {};
+  for (const [categoryId, names] of grouped.entries()) {
+    labelMap[categoryId] = buildCategoryPhrase(names);
+  }
+  return labelMap;
+};
+
+const buildBrandOptions = (products) => {
+  const countMap = new Map();
+  for (const product of products) {
+    const brand = cleanText(getProductBrand(product));
+    if (brand) countMap.set(brand, (countMap.get(brand) || 0) + 1);
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => compareStrings(a[0], b[0]))
+    .map(([brand, count]) => ({ id: brand, label: brand, count }));
+};
+
+const buildCategoryOptions = (products, categoryLabelMap = {}) => {
+  const countMap = new Map();
+  for (const product of products) {
+    const categories = Array.isArray(product?.categories) ? product.categories : [];
+    for (const id of categories) {
+      if (id) countMap.set(id, (countMap.get(id) || 0) + 1);
+    }
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => compareStrings(a[0], b[0]))
+    .map(([id, count], index) => ({
+      id,
+      label: categoryLabelMap[id] || `Categoría ${index + 1}`,
+      count,
+    }));
+};
+
+const getCategoryParentLabel = (label) => {
+  const tokens = normalizeCategoryToken(label).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return 'Sin categoría';
+  if (tokens.length === 1) return titleCase(tokens[0]);
+  return titleCase(tokens[0]);
+};
+
+const buildCategoryTree = (categoryOptions) => {
+  const parentMap = new Map();
+  for (const option of categoryOptions) {
+    const parentLabel = getCategoryParentLabel(option.label);
+    const parentId = `group:${slugify(parentLabel)}`;
+    if (!parentMap.has(parentId)) parentMap.set(parentId, { label: parentLabel, children: [] });
+    parentMap.get(parentId).children.push(option);
+  }
+
+  return [...parentMap.entries()]
+    .map(([id, value]) => ({
+      id,
+      label: value.label,
+      count: value.children.reduce((sum, child) => sum + child.count, 0),
+      children: value.children
+        .sort((a, b) => b.count - a.count || compareStrings(a.label, b.label))
+        .map(child => ({ id: child.id, label: child.label, count: child.count, children: [] })),
+    }))
+    .sort((a, b) => b.count - a.count || compareStrings(a.label, b.label));
+};
+
+const resolveCategorySelectionIds = (selectedCategory, categoryTree) => {
+  if (!selectedCategory || selectedCategory === 'all') return [];
+  const groupNode = categoryTree.find(node => node.id === selectedCategory);
+  if (groupNode) return groupNode.children.map(child => child.id);
+  for (const groupNodeCandidate of categoryTree) {
+    const childMatch = groupNodeCandidate.children.find(child => child.id === selectedCategory);
+    if (childMatch) return [childMatch.id];
+  }
+  return [selectedCategory];
+};
+
+const buildTypeOptions = (products) => {
+  const groupedProducts = groupProductsForDisplay(products);
+  const variantGroupCount = groupedProducts.filter(product => product?.isVariantGroup).length;
+  const uniqueTypes = [...new Set(products.map(product => normalizeKey(product?.type)).filter(Boolean))].sort(compareStrings);
+  const typeCounts = new Map();
+  for (const product of products) {
+    const type = normalizeKey(product?.type);
+    if (!type) continue;
+    typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+  }
+  if (variantGroupCount > 0 || typeCounts.has('variant')) {
+    typeCounts.set('variant', variantGroupCount || typeCounts.get('variant') || 0);
+    if (!uniqueTypes.includes('variant')) uniqueTypes.push('variant');
+  }
+  return uniqueTypes.map(type => ({
+    id: type,
+    label: getProductTypeLabel(type),
+    count: type === 'variant' ? (typeCounts.get('variant') || 0) : (typeCounts.get(type) || 0),
+  }));
+};
+
+const buildStatusOptions = (products) => {
+  const countMap = new Map();
+  for (const product of products) {
+    const status = normalizeStatusKey(product?.state || product?.status);
+    if (status) countMap.set(status, (countMap.get(status) || 0) + 1);
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => compareStrings(a[0], b[0]))
+    .map(([status, count]) => ({ id: status, label: getProductStatusLabel(status), count }));
+};
+
+const buildFacetOptions = (products, pickValue) => {
+  const countMap = new Map();
+
+  for (const product of products) {
+    const value = cleanText(pickValue(product) || '').trim();
+    if (!value) continue;
+
+    const id = normalizeKey(value);
+    const existing = countMap.get(id);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+
+    countMap.set(id, { id, label: value, count: 1 });
+  }
+
+  return [...countMap.values()].sort((left, right) => compareStrings(left.label, right.label));
+};
+
+const buildPriceRange = (products) => {
+  const prices = products
+    .map(product => (typeof product?.price === 'number' && Number.isFinite(product.price) ? product.price : null))
+    .filter(price => typeof price === 'number');
+
+  if (!prices.length) {
+    return { min: 0, max: 0 };
+  }
+
+  return {
+    min: Math.min(...prices),
+    max: Math.max(...prices),
+  };
+};
+
+const filterProducts = (
+  products,
+  searchTerm,
+  selectedName,
+  selectedNumber,
+  selectedCollection,
+  selectedRange,
+  selectedPriceMin,
+  selectedPriceMax,
+  selectedEan,
+  selectedFlow,
+  selectedFinish,
+  selectedAttributeQuery,
+  selectedBrand,
+  selectedCategoryIds,
+  selectedType,
+  selectedStatus,
+  selectedMediaFilter,
+  selectedQuickFilter
+) => {
+  let next = products;
+  const normalizedName = cleanText(selectedName).trim();
+  const normalizedNumber = cleanText(selectedNumber).trim();
+  const normalizedCollection = cleanText(selectedCollection).trim();
+  const normalizedRange = cleanText(selectedRange).trim();
+  const normalizedEan = cleanText(selectedEan).trim();
+  const normalizedFlow = cleanText(selectedFlow).trim();
+  const normalizedFinish = cleanText(selectedFinish).trim();
+  const normalizedAttributeQuery = cleanText(selectedAttributeQuery).trim();
+  const normalizedSearch = cleanText(searchTerm).trim();
+  const minPrice = parseNumberish(selectedPriceMin);
+  const maxPrice = parseNumberish(selectedPriceMax);
+
+  if (normalizedName) {
+    const query = normalizedName.toLowerCase();
+    next = next.filter(product => cleanText(product?.name).toLowerCase().includes(query));
+  }
+
+  if (normalizedNumber) {
+    const query = normalizedNumber.toLowerCase();
+    next = next.filter(product => [product?.sku, product?.number, product?.id].map(value => cleanText(value).toLowerCase()).join(' ').includes(query));
+  }
+
+  if (normalizedCollection) {
+    next = next.filter(product => matchesStructuredQuery([product?.collection], normalizedCollection));
+  }
+
+  if (normalizedRange) {
+    next = next.filter(product => matchesStructuredQuery([product?.range], normalizedRange));
+  }
+
+  if (normalizedEan) {
+    const query = normalizedEan.toLowerCase();
+    next = next.filter(product => cleanText(product?.ean).toLowerCase().includes(query));
+  }
+
+  if (normalizedFlow) {
+    next = next.filter(product => matchesStructuredQuery([product?.flowRate], normalizedFlow));
+  }
+
+  if (normalizedFinish) {
+    const query = normalizedFinish.toLowerCase();
+    next = next.filter(product => {
+      const directMatch = cleanText(product?.finish).toLowerCase().includes(query);
+      const variantMatch = Array.isArray(product?.variants)
+        ? product.variants.some(variant => cleanText(variant?.finish).toLowerCase().includes(query))
+        : false;
+      return directMatch || variantMatch;
+    });
+  }
+
+  if (minPrice !== null || maxPrice !== null) {
+    next = next.filter(product => {
+      const price = parseNumberish(product?.price);
+      if (price === null) return false;
+      if (minPrice !== null && price < minPrice) return false;
+      if (maxPrice !== null && price > maxPrice) return false;
+      return true;
+    });
+  }
+
+  if (normalizedAttributeQuery) {
+    next = next.filter(product =>
+      matchesStructuredQuery(
+        [
+          product?.attributeText,
+          product?.name,
+          product?.description,
+          product?.collection,
+          product?.range,
+          product?.ean,
+          product?.flowRate,
+          product?.finish,
+        ],
+        normalizedAttributeQuery
+      )
+    );
+  }
+
+  if (normalizedSearch) {
+    const query = normalizedSearch.toLowerCase();
+    next = next.filter(product => {
+      const haystack = [
+        product?.name,
+        product?.description,
+        product?.sku,
+        product?.brand,
+        product?.category,
+        product?.type,
+        ...(Array.isArray(product?.categories) ? product.categories : []),
+        ...(Array.isArray(product?.images) ? product.images.map(image => image?.alt || image?.url || '') : []),
+        ...(Array.isArray(product?.attachments) ? product.attachments.map(attachment => `${attachment?.name || ''} ${attachment?.type || ''}`) : []),
+        product?.attributeText,
+      ]
+        .join(' ')
+        .toLowerCase();
+
+      return haystack.includes(query);
+    });
+  }
+
+  if (selectedBrand !== 'all') {
+    next = next.filter(product => cleanText(getProductBrand(product)) === selectedBrand);
+  }
+
+  if (selectedCategoryIds.length > 0) {
+    next = next.filter(product => (Array.isArray(product?.categories) ? product.categories : []).some(categoryId => selectedCategoryIds.includes(categoryId)));
+  }
+
+  if (selectedType !== 'all') {
+    if (normalizeKey(selectedType) === 'variant') {
+      const variantParentIds = new Set(
+        next
+          .filter(product => normalizeKey(product?.type) === 'variant')
+          .map(product => getVariantParentId(product))
+          .filter(Boolean)
+      );
+      next = next.filter(product => {
+        const typeKey = normalizeKey(product?.type);
+        return typeKey === 'variant' || (typeKey === 'group' && variantParentIds.has(product?.id));
+      });
+    } else {
+      next = next.filter(product => normalizeKey(product?.type) === selectedType);
+    }
+  }
+
+  if (selectedStatus !== 'all') {
+    next = next.filter(product => normalizeStatusKey(product?.state || product?.status) === selectedStatus);
+  }
+
+  if (selectedQuickFilter === 'images') next = next.filter(product => hasImages(product));
+  if (selectedQuickFilter === 'attachments') next = next.filter(product => hasDocuments(product));
+  if (selectedQuickFilter === 'categories') next = next.filter(product => hasCategories(product));
+  if (selectedQuickFilter === 'assets') next = next.filter(product => hasAssets(product));
+
+  if (selectedMediaFilter === 'with-assets') next = next.filter(product => hasAssets(product));
+  if (selectedMediaFilter === 'without-assets') next = next.filter(product => !hasAssets(product));
+  if (selectedMediaFilter === 'images-only') next = next.filter(product => hasImages(product) && !hasDocuments(product));
+  if (selectedMediaFilter === 'documents-only') next = next.filter(product => hasDocuments(product) && !hasImages(product));
+  if (selectedMediaFilter === 'mixed') next = next.filter(product => hasMixedMedia(product));
+
+  return next;
+};
+
+const buildCatalogBaseMeta = (products) => {
+  const categoryLabelMap = buildCategoryLabelMap(products);
+  const categoryOptions = buildCategoryOptions(products, categoryLabelMap);
+  const categoryTree = buildCategoryTree(categoryOptions);
+  const visibleCatalogCount = products.filter(product => normalizeKey(product?.type) !== 'variant').length;
+
+  return {
+    totalCatalogCount: visibleCatalogCount,
+    totalRawProductCount: products.length,
+    categoryLabelMap,
+    brandOptions: buildBrandOptions(products),
+    rangeOptions: buildFacetOptions(products, product => product?.range),
+    flowOptions: buildFacetOptions(products, product => product?.flowRate),
+    finishOptions: buildFacetOptions(products, product => product?.finish),
+    priceRange: buildPriceRange(products),
+    categoryTree,
+    typeOptions: buildTypeOptions(products),
+    statusOptions: buildStatusOptions(products),
+    imageCount: products.reduce((sum, product) => sum + (product?.assets?.length || 0), 0),
+    attachmentCount: products.reduce((sum, product) => sum + (product?.attachments?.length || 0), 0),
+    assetCount: products.filter(product => hasAssets(product)).length,
+    withImagesCount: products.filter(product => hasImages(product)).length,
+    withDocumentsCount: products.filter(product => hasDocuments(product)).length,
+    mixedMediaCount: products.filter(product => hasMixedMedia(product)).length,
+  };
+};
+
+const parseCatalogQuery = (searchParams) => ({
+  tenantId: searchParams.get('tenant') || DEFAULT_TENANT,
+  page: clamp(Number.parseInt(searchParams.get('page') || '1', 10) || 1, 1, Number.MAX_SAFE_INTEGER),
+  pageSize: clamp(Number.parseInt(searchParams.get('pageSize') || String(DEFAULT_PAGE_SIZE), 10) || DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE),
+  sortBy: searchParams.get('sortBy') || 'relevance',
+  searchTerm: searchParams.get('searchTerm') || '',
+  selectedName: searchParams.get('selectedName') || '',
+  selectedNumber: searchParams.get('selectedNumber') || '',
+  selectedCollection: searchParams.get('selectedCollection') || '',
+  selectedRange: searchParams.get('selectedRange') || '',
+  selectedPriceMin: searchParams.get('selectedPriceMin') || '',
+  selectedPriceMax: searchParams.get('selectedPriceMax') || '',
+  selectedEan: searchParams.get('selectedEan') || '',
+  selectedFlow: searchParams.get('selectedFlow') || '',
+  selectedFinish: searchParams.get('selectedFinish') || '',
+  selectedAttributeQuery: searchParams.get('selectedAttributeQuery') || '',
+  selectedBrand: searchParams.get('selectedBrand') || 'all',
+  selectedCategory: searchParams.get('selectedCategory') || 'all',
+  selectedType: searchParams.get('selectedType') || 'all',
+  selectedStatus: searchParams.get('selectedStatus') || 'all',
+  selectedMediaFilter: searchParams.get('selectedMediaFilter') || 'all',
+  selectedQuickFilter: searchParams.get('selectedQuickFilter') || 'all',
+});
+
+const buildCatalogPage = (entry, query) => {
+  const selectedCategoryIds = resolveCategorySelectionIds(query.selectedCategory, entry.meta.categoryTree);
+  const filteredProducts = filterProducts(
+    entry.data,
+    query.searchTerm,
+    query.selectedName,
+    query.selectedNumber,
+    query.selectedCollection,
+    query.selectedRange,
+    query.selectedPriceMin,
+    query.selectedPriceMax,
+    query.selectedEan,
+    query.selectedFlow,
+    query.selectedFinish,
+    query.selectedAttributeQuery,
+    query.selectedBrand,
+    selectedCategoryIds,
+    query.selectedType,
+    query.selectedStatus,
+    query.selectedMediaFilter,
+    query.selectedQuickFilter
+  );
+  const groupedProducts = groupProductsForDisplay(filteredProducts);
+  const sortedProducts = sortCatalogProducts(groupedProducts, query.sortBy);
+  const totalPages = Math.max(1, Math.ceil(sortedProducts.length / query.pageSize));
+  const currentPage = clamp(query.page, 1, totalPages);
+  const startIndex = (currentPage - 1) * query.pageSize;
+  const pageProducts = sortedProducts.slice(startIndex, startIndex + query.pageSize);
+  const cacheAgeMs = Date.now() - entry.fetchedAt;
+
+  return {
+    products: pageProducts,
+    meta: {
+      ...entry.meta,
+      currentPage,
+      pageSize: query.pageSize,
+      totalPages,
+      filteredGroupCount: groupedProducts.length,
+      imageCount: filteredProducts.reduce((sum, product) => sum + (product?.assets?.length || 0), 0),
+      attachmentCount: filteredProducts.reduce((sum, product) => sum + (product?.attachments?.length || 0), 0),
+      assetCount: filteredProducts.filter(product => hasAssets(product)).length,
+      withImagesCount: filteredProducts.filter(product => hasImages(product)).length,
+      withDocumentsCount: filteredProducts.filter(product => hasDocuments(product)).length,
+      mixedMediaCount: filteredProducts.filter(product => hasMixedMedia(product)).length,
+      cacheAgeMs,
+      stale: cacheAgeMs > CATALOG_CACHE_TTL_MS,
+    },
+  };
+};
+
+const buildProductMedia = (assetIds, assetMap) => {
+  const images = [];
+  const attachments = [];
+
+  assetIds.forEach((assetId, index) => {
+    const asset = assetMap.get(assetId);
+    if (!asset) return;
+    const fileName = asset.fileName || asset.assetId;
+    const lower = fileName.toLowerCase();
+    if (isImageFileName(fileName)) {
+      images.push({
+        id: asset.assetId,
+        url: asset.presignedUrl,
+        downloadUrl: asset.presignedUrl,
+        alt: fileName,
+        isPrimary: index === 0,
+      });
+      return;
+    }
+    attachments.push({
+      id: asset.assetId,
+      name: fileName,
+      url: asset.presignedUrl,
+      downloadUrl: asset.presignedUrl,
+      type: lower.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+    });
+  });
+
+  images.sort((a, b) => scoreImageByFileName(b) - scoreImageByFileName(a));
+  return { images, attachments };
 };
 
 const getBaseUrl = (env) => (env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com');
@@ -269,6 +1243,26 @@ const getTenantConfig = (tenantId) => {
   return tenants[tenantId] || tenants[DEFAULT_TENANT] || null;
 };
 
+/**
+ * Decodes the JWT payload and returns the tenant_id claim if present.
+ * This relies on Supabase's custom JWT hook (auth.jwt()) embedding tenant_id.
+ * Falls back to null if the header is absent or the token is malformed.
+ */
+const extractTenantFromJwt = (req) => {
+  const auth = req.headers['authorization'];
+  if (!auth?.startsWith('Bearer ')) return null;
+
+  const token = auth.slice(7);
+  try {
+    const payloadB64 = token.split('.')[1];
+    if (!payloadB64) return null;
+    const decoded = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    return typeof decoded.tenant_id === 'string' && decoded.tenant_id ? decoded.tenant_id : null;
+  } catch {
+    return null;
+  }
+};
+
 const normalizeProductBatch = (data) => {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.data)) return data.data;
@@ -301,6 +1295,16 @@ const mapWithConcurrency = async (items, concurrency, mapper) => {
 };
 
 const isImageFileName = (fileName) => /\.(png|jpe?g|gif|webp|bmp|svg|avif|tiff?)$/i.test(fileName);
+
+const scoreImageByFileName = (image) => {
+  const descriptor = (image.alt || image.url || '').toLowerCase();
+  let score = 0;
+  const positive = ['foto', 'photo', 'principal', 'main', 'hero', 'producto', 'product', 'real', 'realista', 'lifestyle', 'render'];
+  const negative = ['dibujo', 'drawing', 'sketch', 'esquema', 'diagram', 'diagrama', 'technical', 'tecnica', 'plano', 'blueprint', 'lineart', 'dwg', 'cad', 'section', 'vista', 'alzado', 'perfil', 'medida', 'medidas', 'dimension'];
+  for (const kw of positive) if (descriptor.includes(kw)) score += 80;
+  for (const kw of negative) if (descriptor.includes(kw)) score -= 260;
+  return score;
+};
 
 const fetchDefinitions = async (tenant, token) => {
   const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
@@ -351,7 +1355,13 @@ const fetchDefinitions = async (tenant, token) => {
   return promise;
 };
 
+const accessTokenCache = new Map();
+
 const getAccessToken = async (tenant) => {
+  const key = `${tenant.env}:${tenant.orgId}`;
+  const cached = accessTokenCache.get(key);
+  if (cached && Date.now() < cached.expiresAt) return cached.token;
+
   const response = await fetchWithRetry(getTokenUrl(tenant.env), {
     method: 'POST',
     headers: {
@@ -374,6 +1384,7 @@ const getAccessToken = async (tenant) => {
     throw new Error('Bluestone token response did not include an access token');
   }
 
+  accessTokenCache.set(key, { token: data.access_token, expiresAt: Date.now() + 55 * 60 * 1000 });
   return data.access_token;
 };
 
@@ -381,12 +1392,13 @@ const fetchProducts = async (tenant) => {
   const cacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}`;
   const cached = catalogCache.get(cacheKey);
   if (cached && Date.now() - cached.fetchedAt < CATALOG_CACHE_TTL_MS) {
-    return cached.data;
+    return cached;
   }
 
   try {
     const token = await getAccessToken(tenant);
     const baseUrl = getBaseUrl(tenant.env);
+    const definitionMap = await fetchDefinitions(tenant, token);
     const allProducts = [];
     let cursor = null;
 
@@ -425,13 +1437,62 @@ const fetchProducts = async (tenant) => {
       cursor = payload?.nextCursor || payload?.cursor || null;
     } while (cursor);
 
-    const assetIds = allProducts.flatMap(product => (Array.isArray(product?.assets) ? product.assets.map((asset) => String(asset)).filter(Boolean) : []));
-    const uniqueAssetIds = [...new Set(assetIds)];
-    const assetMap = new Map();
+    const normalizedProducts = allProducts.map(product => {
+      const ids = extractPreviewAssetIds(product);
+      const rawAttributes = Array.isArray(product?.attributes) ? product.attributes : [];
+      const attributes = enrichAttributes(rawAttributes, definitionMap);
+      return normalizeCatalogProduct(
+        { ...product, __includeAttributes: false, __assetIds: ids },
+        { images: [], attachments: [] },
+        attributes
+      );
+    }).filter(product => !isTestProduct(product));
 
-    const batches = chunk(uniqueAssetIds, 100);
+    const entry = {
+      data: normalizedProducts,
+      meta: buildCatalogBaseMeta(normalizedProducts),
+      fetchedAt: Date.now(),
+    };
+
+    catalogCache.set(cacheKey, entry);
+    void persistCatalogCacheToDisk();
+
+    return entry;
+  } catch (error) {
+    if (cached) {
+      return cached;
+    }
+
+    throw error;
+  }
+};
+
+const fetchProductDetail = async (tenant, productId) => {
+  const token = await getAccessToken(tenant);
+  const baseUrl = getBaseUrl(tenant.env);
+  const response = await fetchWithRetry(`${baseUrl}/pim/products/${encodeURIComponent(productId)}`, {
+    method: 'GET',
+    headers: {
+      accept: 'application/json',
+      authorization: `Bearer ${token}`,
+      'x-organization-id': tenant.orgId,
+      context: tenant.context || 'en',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Bluestone product request failed (${response.status}): ${await response.text()}`);
+  }
+
+  const product = await response.json();
+  const assetIds = Array.isArray(product?.assets) ? product.assets.map(asset => String(asset).trim()).filter(Boolean) : [];
+  const definitionMap = await fetchDefinitions(tenant, token);
+  const assetMap = new Map();
+
+  if (assetIds.length) {
+    const batches = chunk(assetIds, 100);
     const fetchAssetBatch = async (batch) => {
-      const response = await fetchWithRetry(`${baseUrl}/media-bank/assets/download`, {
+      const batchResponse = await fetchWithRetry(`${baseUrl}/media-bank/assets/download`, {
         method: 'POST',
         headers: {
           accept: 'application/json',
@@ -444,11 +1505,11 @@ const fetchProducts = async (tenant) => {
         body: JSON.stringify({ assetIds: batch, expiresInMinutes: 60 }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Bluestone assets request failed (${response.status}): ${await response.text()}`);
+      if (!batchResponse.ok) {
+        throw new Error(`Bluestone assets request failed (${batchResponse.status}): ${await batchResponse.text()}`);
       }
 
-      const payload = await response.json();
+      const payload = await batchResponse.json();
       for (const asset of payload.assets || []) {
         if (!asset?.assetId || !asset?.presignedUrl) continue;
         assetMap.set(asset.assetId, {
@@ -460,78 +1521,35 @@ const fetchProducts = async (tenant) => {
     };
 
     await mapWithConcurrency(batches, 4, fetchAssetBatch);
-    const definitionMap = await fetchDefinitions(tenant, token);
-
-    const normalizedProducts = allProducts.map(product => {
-      const ids = Array.isArray(product?.assets) ? product.assets.map((asset) => String(asset)).filter(Boolean) : [];
-      const images = [];
-      const attachments = [];
-      const attributes = Array.isArray(product?.attributes)
-        ? product.attributes.map(attribute => {
-            const definitionId = String(attribute?.definitionId || '');
-            const definition = definitionMap.get(definitionId);
-            const rawValue = attribute?.value ?? attribute?.values;
-            const displayValue = formatAttributeValue(rawValue);
-
-            return {
-              definitionId,
-              definitionName: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
-              name: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
-              group: cleanText(definition?.group || attribute?.groupName || attribute?.group || ''),
-              dataType: cleanText(definition?.dataType || attribute?.dataType || ''),
-              value: displayValue,
-              displayValue,
-              rawValue,
-              readOnly: Boolean(attribute?.readOnly),
-            };
-          })
-        : [];
-
-      ids.forEach((assetId, index) => {
-        const asset = assetMap.get(assetId);
-        if (!asset) return;
-        const fileName = asset.fileName || asset.assetId;
-        const lower = fileName.toLowerCase();
-        if (isImageFileName(fileName)) {
-          images.push({
-            id: asset.assetId,
-            url: asset.presignedUrl,
-            downloadUrl: asset.presignedUrl,
-            alt: fileName,
-            isPrimary: index === 0,
-          });
-          return;
-        }
-        attachments.push({
-          id: asset.assetId,
-          name: fileName,
-          url: asset.presignedUrl,
-          downloadUrl: asset.presignedUrl,
-          type: lower.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
-        });
-      });
-
-      return {
-        ...product,
-        attributes,
-        images,
-        attachments,
-      };
-    });
-
-    catalogCache.set(cacheKey, {
-      data: normalizedProducts,
-      fetchedAt: Date.now(),
-    });
-
-    return normalizedProducts;
-  } catch (error) {
-    if (cached) {
-      return cached.data;
-    }
-
-    throw error;
   }
+
+  const attributes = Array.isArray(product?.attributes)
+    ? product.attributes.map(attribute => {
+        const definitionId = String(attribute?.definitionId || '');
+        const definition = definitionMap.get(definitionId);
+        const rawValue = attribute?.value ?? attribute?.values;
+        const displayValue = formatAttributeValue(rawValue);
+
+        return {
+          definitionId,
+          definitionNumber: cleanText(definition?.number || attribute?.number || attribute?.definitionNumber || ''),
+          definitionName: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
+          name: cleanText(definition?.name || attribute?.definitionName || attribute?.name || attribute?.label || definitionId || 'Atributo'),
+          group: cleanText(definition?.group || attribute?.groupName || attribute?.group || ''),
+          dataType: cleanText(definition?.dataType || attribute?.dataType || ''),
+          value: displayValue,
+          displayValue,
+          rawValue,
+          readOnly: Boolean(attribute?.readOnly),
+        };
+      })
+    : [];
+
+  return normalizeCatalogProduct(
+    { ...product, __includeAttributes: true, __assetIds: assetIds },
+    buildProductMedia(assetIds, assetMap),
+    attributes
+  );
 };
 
 const sendJson = (res, statusCode, body) => {
@@ -607,6 +1625,62 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/asset') {
+    const tenantId = url.searchParams.get('tenant') || DEFAULT_TENANT;
+    const assetId = (url.searchParams.get('assetId') || '').trim();
+
+    if (!assetId) {
+      sendJson(res, 400, { error: 'assetId is required' });
+      return;
+    }
+
+    const assetTenant = getTenantConfig(tenantId);
+    if (!assetTenant) {
+      sendJson(res, 400, { error: 'Tenant not configured' });
+      return;
+    }
+
+    try {
+      const assetToken = await getAccessToken(assetTenant);
+      const assetBaseUrl = getBaseUrl(assetTenant.env);
+      const assetResponse = await fetchWithRetry(`${assetBaseUrl}/media-bank/assets/download`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: `Bearer ${assetToken}`,
+          'x-organization-id': assetTenant.orgId,
+          context: assetTenant.context || 'en',
+          'context-fallback': 'true',
+        },
+        body: JSON.stringify({ assetIds: [assetId], expiresInMinutes: 60 }),
+      });
+
+      if (!assetResponse.ok) {
+        sendJson(res, assetResponse.status, { error: 'Failed to fetch asset' });
+        return;
+      }
+
+      const assetPayload = await assetResponse.json();
+      const asset = assetPayload.assets?.[0];
+      if (!asset?.presignedUrl) {
+        sendJson(res, 404, { error: 'Asset not found' });
+        return;
+      }
+
+      res.writeHead(307, {
+        ...corsHeaders,
+        'Content-Type': 'text/plain',
+        Location: asset.presignedUrl,
+        'Cache-Control': 'public, max-age=3600',
+      });
+      res.end();
+    } catch (error) {
+      sendJson(res, 500, { error: 'Failed to proxy asset', message: error?.message });
+    }
+    return;
+  }
+
   if (url.pathname !== '/api/catalog') {
     if (url.pathname === '/api/organizations') {
       sendJson(res, 200, { organizations: parsePublicOrganizations() });
@@ -618,7 +1692,24 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const tenantId = url.searchParams.get('tenant') || DEFAULT_TENANT;
+    const query = parseCatalogQuery(url.searchParams);
+    const requestedTenantId = query.tenantId || DEFAULT_TENANT;
+    const productId = typeof url.searchParams.get('productId') === 'string' ? url.searchParams.get('productId').trim() : '';
+    const jwtTenantId = extractTenantFromJwt(req);
+
+    // If the JWT carries a tenant_id claim, it must match the requested tenant.
+    // This prevents a user from requesting another tenant's catalog via query param.
+    if (jwtTenantId && requestedTenantId !== DEFAULT_TENANT && requestedTenantId !== jwtTenantId) {
+      sendJson(res, 403, { error: 'Forbidden: tenant mismatch' });
+      return;
+    }
+
+    // Prefer the claim from the JWT; fall back to query param for local dev.
+    const tenantId = jwtTenantId ?? requestedTenantId;
+    if (!jwtTenantId) {
+      console.warn('[security] No tenant_id in JWT — using query param. Configure auth.jwt() hook in Supabase for production.');
+    }
+
     const tenant = getTenantConfig(tenantId);
 
     if (!tenant) {
@@ -626,8 +1717,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const products = await fetchProducts(tenant);
-    sendJson(res, 200, { data: products });
+    if (productId) {
+      const product = await fetchProductDetail(tenant, productId);
+      sendJson(res, 200, { data: product });
+      return;
+    }
+
+    const catalogIndex = await fetchProducts(tenant);
+    const page = buildCatalogPage(catalogIndex, query);
+    sendJson(res, 200, { data: page.products, meta: page.meta });
   } catch (error) {
     sendJson(res, 500, {
       error: 'Failed to fetch catalog',
@@ -640,4 +1738,3 @@ const port = Number(process.env.PORT || 3001);
 server.listen(port, '127.0.0.1', () => {
   console.log(`Bluestone proxy listening on http://127.0.0.1:${port}`);
 });
-
