@@ -186,12 +186,12 @@ export function CatalogSettingsModal({
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {CATALOG_THEMES.map(theme => {
-                const active = settings.paletteId === theme.id;
+                const active = settings.paletteId === theme.id && !settings.customAccentHex;
                 return (
                   <button
                     key={theme.id}
                     type="button"
-                    onClick={() => onChange({ ...settings, paletteId: theme.id })}
+                    onClick={() => onChange({ ...settings, paletteId: theme.id, customAccentHex: undefined })}
                     className={`rounded-2xl border p-4 text-left transition ${
                       active ? 'border-[color:var(--catalog-accent)] bg-white shadow-sm' : 'border-slate-200 bg-white hover:border-slate-300'
                     }`}
@@ -211,6 +211,43 @@ export function CatalogSettingsModal({
                   </button>
                 );
               })}
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Color personalizado</span>
+              <p className="mt-1 text-sm text-slate-600">Sobreescribe la paleta con un color de acento exacto.</p>
+              <div className="mt-3 flex items-center gap-3">
+                <input
+                  type="color"
+                  value={settings.customAccentHex || '#143d6b'}
+                  onChange={event => onChange({ ...settings, customAccentHex: event.target.value })}
+                  className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-0.5"
+                  aria-label="Seleccionar color personalizado"
+                />
+                <input
+                  type="text"
+                  value={settings.customAccentHex || ''}
+                  onChange={event => {
+                    const val = event.target.value;
+                    if (/^#[0-9a-fA-F]{0,6}$/.test(val) || val === '') {
+                      onChange({ ...settings, customAccentHex: val || undefined });
+                    }
+                  }}
+                  placeholder="#000000"
+                  maxLength={7}
+                  className="h-10 w-28 rounded-xl border border-slate-200 bg-white px-3 font-mono text-sm text-slate-900 outline-none focus:border-[color:var(--catalog-accent)]"
+                  aria-label="Código hexadecimal del color"
+                />
+                {settings.customAccentHex ? (
+                  <button
+                    type="button"
+                    onClick={() => onChange({ ...settings, customAccentHex: undefined })}
+                    className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100"
+                  >
+                    Limpiar
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
 

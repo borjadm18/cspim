@@ -28,7 +28,6 @@ interface ProductContentTabProps {
   activeVariantIndex: number;
   setActiveVariantIndex: (idx: number) => void;
   attachments: any[];
-  onAddDocument?: () => void;
   attributes: any[];
   attributeGroups: Array<{ groupName: string; attributes: any[] }>;
   fileAttributes: any[];
@@ -97,7 +96,6 @@ export function ProductContentTab({
   activeVariantIndex,
   setActiveVariantIndex,
   attachments,
-  onAddDocument,
   attributes,
   attributeGroups,
   fileAttributes,

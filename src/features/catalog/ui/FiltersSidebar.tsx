@@ -1,7 +1,7 @@
 import { ChevronDown, Search, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { Product } from '../api/productService';
-import type { BrandOption, CategoryTreeNode, MediaFilter, StatusOption, TypeOption } from '../model/catalogTypes';
+import type { BrandOption, CategoryTreeNode, FacetOption, MediaFilter, PriceRange, StatusOption, TypeOption } from '../model/catalogTypes';
 import { cleanText } from '../selectors/catalogSelectors';
 
 interface FiltersSidebarProps {
@@ -9,6 +9,10 @@ interface FiltersSidebarProps {
   summaryProductsCount?: number;
   summaryWithImagesCount?: number;
   brandOptions: BrandOption[];
+  rangeOptions: FacetOption[];
+  flowOptions: FacetOption[];
+  finishOptions: FacetOption[];
+  priceRange: PriceRange;
   selectedBrand: string;
   onBrandChange: (brand: string) => void;
   categoryTree: CategoryTreeNode[];
@@ -27,6 +31,20 @@ interface FiltersSidebarProps {
   onNameChange: (value: string) => void;
   selectedNumber: string;
   onNumberChange: (value: string) => void;
+  selectedCollection: string;
+  onCollectionChange: (value: string) => void;
+  selectedRange: string;
+  onRangeChange: (value: string) => void;
+  selectedPriceMin: string;
+  onPriceMinChange: (value: string) => void;
+  selectedPriceMax: string;
+  onPriceMaxChange: (value: string) => void;
+  selectedEan: string;
+  onEanChange: (value: string) => void;
+  selectedFlow: string;
+  onFlowChange: (value: string) => void;
+  selectedFinish: string;
+  onFinishChange: (value: string) => void;
   selectedAttributeQuery: string;
   onAttributeQueryChange: (value: string) => void;
   onClearFilters: () => void;
@@ -51,6 +69,11 @@ const STATUS_TILES = [
   { id: 'published', label: 'Publicado' },
   { id: 'archived', label: 'Archivado' },
 ];
+
+const formatPriceValue = (value: number) =>
+  new Intl.NumberFormat('es-ES', {
+    maximumFractionDigits: 0,
+  }).format(Math.round(value));
 
 const flattenTree = (nodes: CategoryTreeNode[], ancestors: string[] = []): CategoryItem[] =>
   nodes.flatMap(node => {
@@ -110,6 +133,10 @@ export function FiltersSidebar({
   summaryProductsCount,
   summaryWithImagesCount,
   brandOptions = [],
+  rangeOptions = [],
+  flowOptions = [],
+  finishOptions = [],
+  priceRange,
   selectedBrand,
   onBrandChange,
   categoryTree = [],
@@ -128,11 +155,28 @@ export function FiltersSidebar({
   onNameChange,
   selectedNumber,
   onNumberChange,
+  selectedCollection,
+  onCollectionChange,
+  selectedRange,
+  onRangeChange,
+  selectedPriceMin,
+  onPriceMinChange,
+  selectedPriceMax,
+  onPriceMaxChange,
+  selectedEan,
+  onEanChange,
+  selectedFlow,
+  onFlowChange,
+  selectedFinish,
+  onFinishChange,
   selectedAttributeQuery,
   onAttributeQueryChange,
   onClearFilters,
 }: FiltersSidebarProps) {
   const hasBrands = brandOptions.length > 0;
+  const hasRangeOptions = rangeOptions.length > 0;
+  const hasFlowOptions = flowOptions.length > 0;
+  const hasFinishOptions = finishOptions.length > 0;
   const [categoryQuery, setCategoryQuery] = useState('');
   const [showAllCategories, setShowAllCategories] = useState(false);
 
@@ -162,9 +206,27 @@ export function FiltersSidebar({
 
   const typeLookup = useMemo(() => Object.fromEntries(typeOptions.map(option => [option.id, option])), [typeOptions]);
   const statusLookup = useMemo(() => Object.fromEntries(statusOptions.map(option => [option.id, option])), [statusOptions]);
+  const sliderMin = Number.isFinite(priceRange?.min) ? priceRange.min : 0;
+  const sliderMax = Number.isFinite(priceRange?.max) ? priceRange.max : 0;
+  const hasPriceRange = sliderMax > sliderMin;
+  const selectedPriceMinNumber = selectedPriceMin.trim() ? Number(selectedPriceMin.replace(',', '.')) : sliderMin;
+  const selectedPriceMaxNumber = selectedPriceMax.trim() ? Number(selectedPriceMax.replace(',', '.')) : sliderMax;
+  const safePriceMin = Number.isFinite(selectedPriceMinNumber) ? Math.max(sliderMin, Math.min(selectedPriceMinNumber, selectedPriceMaxNumber || sliderMax)) : sliderMin;
+  const safePriceMax = Number.isFinite(selectedPriceMaxNumber) ? Math.min(sliderMax, Math.max(selectedPriceMaxNumber, selectedPriceMinNumber || sliderMin)) : sliderMax;
+  const sliderRange = Math.max(sliderMax - sliderMin, 1);
+  const leftPercent = ((safePriceMin - sliderMin) / sliderRange) * 100;
+  const rightPercent = ((safePriceMax - sliderMin) / sliderRange) * 100;
+  const activeTrackWidth = Math.max(rightPercent - leftPercent, 0);
   const activeFilterCount = [
     selectedName.trim(),
     selectedNumber.trim(),
+    selectedCollection.trim(),
+    selectedRange.trim(),
+    selectedPriceMin.trim(),
+    selectedPriceMax.trim(),
+    selectedEan.trim(),
+    selectedFlow.trim(),
+    selectedFinish.trim(),
     selectedAttributeQuery.trim(),
     selectedBrand !== 'all',
     selectedCategory !== 'all',
@@ -214,16 +276,188 @@ export function FiltersSidebar({
 
           <div className="space-y-2">
             <label htmlFor="number-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Número
+              SKU
             </label>
             <input
               id="number-filter"
               type="text"
               value={selectedNumber}
               onChange={event => onNumberChange(event.target.value)}
-              placeholder="Filtrar por número o SKU..."
+              placeholder="Filtrar por SKU..."
               className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
             />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="collection-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Colección
+            </label>
+            <input
+              id="collection-filter"
+              type="text"
+              value={selectedCollection}
+              onChange={event => onCollectionChange(event.target.value)}
+              placeholder="Filtrar por colección..."
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="range-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Gama
+            </label>
+            <select
+              id="range-filter"
+              value={selectedRange}
+              onChange={event => onRangeChange(event.target.value)}
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              disabled={!hasRangeOptions}
+            >
+              <option value="">{hasRangeOptions ? 'Todas las gamas' : 'Sin gamas disponibles'}</option>
+              {rangeOptions.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label} ({option.count})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Rango de precio
+            </label>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4">
+              <div className="mb-4 flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
+                <div className="rounded-full bg-white px-3 py-1.5 shadow-sm">
+                  Desde {formatPriceValue(safePriceMin)} €
+                </div>
+                <div className="rounded-full bg-white px-3 py-1.5 shadow-sm">
+                  Hasta {formatPriceValue(safePriceMax)} €
+                </div>
+              </div>
+
+              {hasPriceRange ? (
+                <div className="relative py-4">
+                  <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-200" />
+                  <div
+                    className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-[color:var(--catalog-accent)]"
+                    style={{ left: `${leftPercent}%`, width: `${activeTrackWidth}%` }}
+                  />
+                  <input
+                    type="range"
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={1}
+                    value={safePriceMin}
+                    onChange={event => {
+                      const nextValue = Math.min(Number(event.target.value), safePriceMax);
+                      onPriceMinChange(String(nextValue));
+                    }}
+                    className="pointer-events-none absolute left-0 top-1/2 h-2 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)] [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-[color:var(--catalog-accent)] [&::-moz-range-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)]"
+                    aria-label="Precio mínimo"
+                  />
+                  <input
+                    type="range"
+                    min={sliderMin}
+                    max={sliderMax}
+                    step={1}
+                    value={safePriceMax}
+                    onChange={event => {
+                      const nextValue = Math.max(Number(event.target.value), safePriceMin);
+                      onPriceMaxChange(String(nextValue));
+                    }}
+                    className="pointer-events-none absolute left-0 top-1/2 h-2 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)] [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-[color:var(--catalog-accent)] [&::-moz-range-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)]"
+                    aria-label="Precio máximo"
+                  />
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
+                  No hay suficientes precios para construir el rango.
+                </div>
+              )}
+
+              <div className="mt-2 flex items-center justify-between text-xs font-medium text-slate-500">
+                <span>{formatPriceValue(sliderMin)} €</span>
+                <span>{formatPriceValue(sliderMax)} €</span>
+              </div>
+            </div>
+
+            <div className="hidden grid-cols-2 gap-2">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={selectedPriceMin}
+                onChange={event => onPriceMinChange(event.target.value)}
+                placeholder="Desde €"
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              />
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={selectedPriceMax}
+                onChange={event => onPriceMaxChange(event.target.value)}
+                placeholder="Hasta €"
+                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="ean-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              EAN
+            </label>
+            <input
+              id="ean-filter"
+              type="text"
+              value={selectedEan}
+              onChange={event => onEanChange(event.target.value)}
+              placeholder="Filtrar por EAN..."
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="flow-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Caudal
+            </label>
+            <select
+              id="flow-filter"
+              value={selectedFlow}
+              onChange={event => onFlowChange(event.target.value)}
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              disabled={!hasFlowOptions}
+            >
+              <option value="">{hasFlowOptions ? 'Todos los caudales' : 'Sin caudales disponibles'}</option>
+              {flowOptions.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label} ({option.count})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label htmlFor="finish-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              Acabado
+            </label>
+            <select
+              id="finish-filter"
+              value={selectedFinish}
+              onChange={event => onFinishChange(event.target.value)}
+              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
+              disabled={!hasFinishOptions}
+            >
+              <option value="">{hasFinishOptions ? 'Todos los acabados' : 'Sin acabados disponibles'}</option>
+              {finishOptions.map(option => (
+                <option key={option.id} value={option.id}>
+                  {option.label} ({option.count})
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="space-y-2">
@@ -237,7 +471,7 @@ export function FiltersSidebar({
                 type="text"
                 value={selectedAttributeQuery}
                 onChange={event => onAttributeQueryChange(event.target.value)}
-                placeholder="Filtrar por atributo o valor..."
+                placeholder="Buscar por atributo o valor completo..."
                 className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
               />
               {selectedAttributeQuery ? (

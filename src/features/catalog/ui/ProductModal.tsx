@@ -48,7 +48,6 @@ interface ProductModalProps {
   locales?: string[];
   onSave?: (patch: Partial<Product>) => void;
   onAddImage?: () => void;
-  onAddDocument?: () => void;
   onAddVariant?: () => void;
   onNavigateBreadcrumb?: (segment: 'catalog' | 'category' | 'product', value?: string) => void;
   catalogProducts?: Product[];
@@ -87,7 +86,6 @@ export function ProductModal({
   locales = DEFAULT_LOCALES,
   onSave,
   onAddImage,
-  onAddDocument,
   onAddVariant,
   onNavigateBreadcrumb,
   catalogProducts: _catalogProducts,
@@ -278,7 +276,7 @@ export function ProductModal({
       baseRef: draft.baseRef,
       visibleOnWeb: draft.visibleOnWeb,
       price: draft.price.trim() ? Number(draft.price.replace(',', '.')) : undefined,
-      weight: draft.weight,
+      weight: draft.weight.trim() ? Number(draft.weight.replace(',', '.')) : undefined,
       collection: draft.collection,
       range: draft.range,
       status: draft.status,
@@ -512,7 +510,6 @@ export function ProductModal({
               activeVariantIndex={activeVariantIndex}
               setActiveVariantIndex={setActiveVariantIndex}
               attachments={attachments}
-              onAddDocument={onAddDocument}
               attributes={attributes}
               attributeGroups={attributeGroups}
               fileAttributes={fileAttributes}

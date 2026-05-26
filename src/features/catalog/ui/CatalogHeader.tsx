@@ -1,6 +1,6 @@
 import { ChevronDown, LogOut, Search, Settings2, X } from 'lucide-react';
-import { useMemo, useState, type ReactNode } from 'react';
-import type { CatalogAccessMode, MediaFilter, QuickFilter, TenantOption } from '../model/catalogTypes';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { CatalogAccessMode, TenantOption } from '../model/catalogTypes';
 
 interface CatalogHeaderProps {
   searchTerm: string;
@@ -11,20 +11,12 @@ interface CatalogHeaderProps {
   onClearRecentSearches: () => void;
   productsCount: number;
   filteredCount: number;
-  imageCount: number;
-  attachmentCount: number;
-  withImagesCount: number;
-  categoryCount: number;
-  assetCount: number;
   activeViewName?: string | null;
   logoUrl?: string;
   tenantOptions: TenantOption[];
   selectedTenantId: string;
   accessMode: CatalogAccessMode;
   onTenantChange: (tenantId: string) => void;
-  selectedQuickFilter: QuickFilter;
-  selectedMediaFilter: MediaFilter;
-  onStatFilterClick: (filter: 'images' | 'attachments' | 'images-only' | 'categories' | 'assets') => void;
   sortControl?: ReactNode;
   onOpenSettings: () => void;
   onSignOut: () => void;
@@ -39,26 +31,43 @@ export function CatalogHeader({
   onClearRecentSearches,
   productsCount,
   filteredCount,
-  imageCount,
-  attachmentCount,
-  withImagesCount,
-  categoryCount,
-  assetCount,
   activeViewName,
   logoUrl,
   tenantOptions,
   selectedTenantId,
   accessMode,
   onTenantChange,
-  selectedQuickFilter,
-  selectedMediaFilter,
-  onStatFilterClick,
   sortControl,
   onOpenSettings,
   onSignOut,
 }: CatalogHeaderProps) {
   const [tenantMenuOpen, setTenantMenuOpen] = useState(false);
   const [tenantSearch, setTenantSearch] = useState('');
+  const [inputValue, setInputValue] = useState(searchTerm);
+  const [logoError, setLogoError] = useState(false);
+  const skipDebounceRef = useRef(false);
+
+  // Sync external changes (vistas guardadas, limpiar desde el padre)
+  useEffect(() => {
+    skipDebounceRef.current = true;
+    setInputValue(searchTerm);
+  }, [searchTerm]);
+
+  // Debounce: propagar al padre tras 250 ms de inactividad
+  useEffect(() => {
+    if (skipDebounceRef.current) {
+      skipDebounceRef.current = false;
+      return;
+    }
+    const timer = setTimeout(() => onSearchTermChange(inputValue), 250);
+    return () => clearTimeout(timer);
+  }, [inputValue, onSearchTermChange]);
+
+  // Resetear error de logo cuando cambia la URL
+  useEffect(() => {
+    setLogoError(false);
+  }, [logoUrl]);
+
   const selectedTenant = tenantOptions.find(option => option.id === selectedTenantId) || tenantOptions[0];
 
   const filteredTenantOptions = useMemo(() => {
@@ -71,22 +80,19 @@ export function CatalogHeader({
     });
   }, [tenantOptions, tenantSearch]);
 
-  const statButtons = [
-    { key: 'images' as const, label: 'imágenes', value: imageCount, active: selectedQuickFilter === 'images' },
-    { key: 'attachments' as const, label: 'adjuntos', value: attachmentCount, active: selectedQuickFilter === 'attachments' },
-    { key: 'images-only' as const, label: 'con imágenes', value: withImagesCount, active: selectedMediaFilter === 'images-only' },
-    { key: 'categories' as const, label: 'categorías', value: categoryCount, active: selectedQuickFilter === 'categories' },
-    { key: 'assets' as const, label: 'con archivos', value: assetCount, active: selectedQuickFilter === 'assets' },
-  ];
-
   return (
     <>
       <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
         <div className="flex w-full flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-4">
             <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
-              {logoUrl ? (
-                <img src={logoUrl} alt="Logo del catálogo" className="h-full w-full object-contain p-2" />
+              {logoUrl && !logoError ? (
+                <img
+                  src={logoUrl}
+                  alt="Logo del catálogo"
+                  className="h-full w-full object-contain p-2"
+                  onError={() => setLogoError(true)}
+                />
               ) : (
                 <span className="flex h-full w-full items-center justify-center rounded-[20px] bg-[var(--catalog-accent)] text-sm font-semibold tracking-[0.24em] text-white">
                   CS
@@ -200,31 +206,36 @@ export function CatalogHeader({
 
       <section className="mb-6 rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-5 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur">
         <div className="grid gap-4">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Buscar por nombre, SKU, categoría o atributo..."
-              value={searchTerm}
-              onChange={event => onSearchTermChange(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter') onSearchSubmit(searchTerm);
-              }}
-              className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-12 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
-            />
-            {searchTerm.trim().length > 0 ? (
-              <button
-                type="button"
-                onClick={() => {
-                  onSearchTermChange('');
-                  onSearchSubmit('');
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="relative flex-1">
+              <Search className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Buscar por nombre, SKU, categoría o atributo..."
+                value={inputValue}
+                onChange={event => setInputValue(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter') onSearchSubmit(inputValue);
                 }}
-                aria-label="Limpiar búsqueda"
-                className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            ) : null}
+                className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-12 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
+              />
+              {inputValue.trim().length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInputValue('');
+                    onSearchTermChange('');
+                    onSearchSubmit('');
+                  }}
+                  aria-label="Limpiar búsqueda"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              ) : null}
+            </div>
+
+            {sortControl ? <div className="shrink-0">{sortControl}</div> : null}
           </div>
 
           {recentSearches.length > 0 && (
@@ -256,23 +267,6 @@ export function CatalogHeader({
               Mostrando <span className="font-semibold text-slate-900">{filteredCount}</span> grupos de{' '}
               <span className="font-semibold text-slate-900">{productsCount}</span> productos
             </p>
-            <div className="flex flex-wrap items-center gap-2">
-              {sortControl ? <div className="mr-1">{sortControl}</div> : null}
-              {statButtons.map(button => (
-                <button
-                  key={button.key}
-                  type="button"
-                  onClick={() => onStatFilterClick(button.key)}
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] transition ${
-                    button.active
-                      ? 'border-[color:var(--catalog-accent)] bg-[var(--catalog-accent)] text-white shadow-[0_10px_20px_rgba(20,61,107,0.18)]'
-                      : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-white'
-                  }`}
-                >
-                  {button.value} {button.label}
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </section>

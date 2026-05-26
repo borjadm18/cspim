@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Package, Paperclip } from 'lucide-react';
 import type { Product } from '../api/productService';
-import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel, getVariantSwatchColor } from '../selectors/catalogSelectors';
+import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel, getVariantSwatchColor, hasDocuments } from '../selectors/catalogSelectors';
 
 interface ProductCardProps {
   product: Product;
@@ -29,6 +29,7 @@ const fallbackImage = () => {
 export const ProductCard = React.memo(function ProductCard({ product, tenantId, categoryLabelMap, onViewDetails }: ProductCardProps) {
   const primaryImage =
     product.images?.find(image => image?.url)?.url ||
+    product.thumbnailUrl ||
     (product.previewImageAssetId
       ? `/api/asset?tenant=${encodeURIComponent(tenantId)}&assetId=${encodeURIComponent(product.previewImageAssetId)}`
       : undefined);
@@ -43,7 +44,7 @@ export const ProductCard = React.memo(function ProductCard({ product, tenantId, 
   const brandOrFamily = cleanText(product.brand).trim() || primaryCategory;
   const visibleSwatches = variantSwatches.length > 6 ? variantSwatches.slice(0, 5) : variantSwatches.slice(0, 6);
   const overflowCount = variantSwatches.length > 6 ? variantSwatches.length - 5 : 0;
-  const hasDocuments = ((product as any).attachments?.length ?? 0) > 0;
+  const productHasDocuments = hasDocuments(product);
 
   return (
     <article
@@ -59,7 +60,7 @@ export const ProductCard = React.memo(function ProductCard({ product, tenantId, 
       }}
       >
       <div className="relative border-b border-slate-100 bg-gradient-to-b from-white to-slate-50/70">
-        {hasDocuments && (
+        {productHasDocuments && (
           <div className="absolute left-2 top-2 z-20 flex h-6 w-6 items-center justify-center rounded-full border border-slate-200 bg-white/90 shadow-sm" title="Tiene documentos adjuntos">
             <Paperclip className="h-3 w-3 text-slate-500" />
           </div>
