@@ -48,11 +48,21 @@ export function useTenantBranding(tenantId: string | undefined) {
     }
 
     const loadBranding = async () => {
-      const { data } = await supabase
-        .from('tenants')
-        .select('name, primary_color, primary_hover, primary_text, logo_url')
-        .eq('id', tenantId)
-        .single();
+      let data: { name: string; primary_color: string; primary_hover: string; primary_text: string; logo_url: string | null } | null = null;
+
+      try {
+        const result = await supabase
+          .from('tenants')
+          .select('name, primary_color, primary_hover, primary_text, logo_url')
+          .eq('id', tenantId)
+          .single();
+
+        if (result.error) throw result.error;
+        data = result.data;
+      } catch {
+        // Network or DB failure — leave branding as null so defaults apply
+        return;
+      }
 
       if (!isMounted || !data) return;
 

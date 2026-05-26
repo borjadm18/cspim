@@ -54,6 +54,44 @@ export const CATALOG_THEMES: CatalogTheme[] = [
 
 export const DEFAULT_CATALOG_THEME_ID = 'navy';
 
-export const resolveCatalogTheme = (themeId?: string): CatalogTheme =>
-  CATALOG_THEMES.find(theme => theme.id === themeId) || CATALOG_THEMES[0];
+export function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace('#', '');
+  const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
+  const num = parseInt(full, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+export function rgbToHex(r: number, g: number, b: number): string {
+  return '#' + [r, g, b].map(n => Math.round(Math.max(0, Math.min(255, n))).toString(16).padStart(2, '0')).join('');
+}
+
+export function darkenHex(hex: string, amount: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHex(r * (1 - amount), g * (1 - amount), b * (1 - amount));
+}
+
+export function mixWithWhite(hex: string, whiteFraction: number): string {
+  const [r, g, b] = hexToRgb(hex);
+  return rgbToHex(r + (255 - r) * whiteFraction, g + (255 - g) * whiteFraction, b + (255 - b) * whiteFraction);
+}
+
+export function hexToTheme(hex: string): CatalogTheme {
+  return {
+    id: 'custom',
+    name: 'Personalizado',
+    accent: hex,
+    accentStrong: darkenHex(hex, 0.2),
+    accentSoft: mixWithWhite(hex, 0.88),
+    accentInk: '#0f172a',
+    pageStart: mixWithWhite(hex, 0.97),
+    pageEnd: mixWithWhite(hex, 0.94),
+  };
+}
+
+export const resolveCatalogTheme = (themeId?: string, customHex?: string): CatalogTheme => {
+  if (customHex && /^#[0-9a-fA-F]{6}$/.test(customHex)) {
+    return hexToTheme(customHex);
+  }
+  return CATALOG_THEMES.find(theme => theme.id === themeId) || CATALOG_THEMES[0];
+};
 
