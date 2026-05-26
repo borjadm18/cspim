@@ -1,6 +1,7 @@
 ﻿import type { CatalogSettings } from '../src/features/catalog/model/catalogTypes.js';
 import { DEFAULT_CATALOG_THEME_ID } from '../src/shared/theme/catalogThemes.js';
 import { requireAuth } from './_lib/auth.js';
+import { checkRateLimit, getClientIp } from './_lib/rateLimit.js';
 
 type StoredSettings = {
   tenantId: string;
@@ -37,13 +38,28 @@ const DEFAULT_SETTINGS: CatalogSettings = {
   pageSize: 30,
   density: 'comfortable',
   logoUrl: undefined,
+  faviconUrl: undefined,
+  loginHeroImageUrl: undefined,
+  loginEyebrow: undefined,
+  loginHeading: undefined,
+  loginBody: undefined,
   paletteId: DEFAULT_CATALOG_THEME_ID,
 };
 
 const settingsStore = new Map<string, CatalogSettings>();
 
-const isValidHttpsUrl = (v: string): boolean => {
+const isValidAssetUrl = (v: string): boolean => {
   try { return new URL(v).protocol === 'https:'; } catch { return false; }
+};
+
+const isValidImageDataUrl = (value: string): boolean =>
+  /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(value);
+
+const normalizeShortText = (value: unknown, maxLength: number): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const next = value.trim();
+  if (!next) return undefined;
+  return next.slice(0, maxLength);
 };
 
 const normalizeSettings = (value: unknown): CatalogSettings => {
@@ -51,10 +67,27 @@ const normalizeSettings = (value: unknown): CatalogSettings => {
   return {
     pageSize: typeof candidate.pageSize === 'number' ? candidate.pageSize : DEFAULT_SETTINGS.pageSize,
     density: candidate.density === 'compact' ? 'compact' : 'comfortable',
-    logoUrl: typeof candidate.logoUrl === 'string' && isValidHttpsUrl(candidate.logoUrl.trim())
+    logoUrl: typeof candidate.logoUrl === 'string' && (isValidAssetUrl(candidate.logoUrl.trim()) || isValidImageDataUrl(candidate.logoUrl.trim()))
       ? candidate.logoUrl.trim()
       : undefined,
+    faviconUrl:
+      typeof candidate.faviconUrl === 'string' &&
+      (isValidAssetUrl(candidate.faviconUrl.trim()) || isValidImageDataUrl(candidate.faviconUrl.trim()))
+        ? candidate.faviconUrl.trim()
+        : undefined,
+    loginHeroImageUrl:
+      typeof candidate.loginHeroImageUrl === 'string' &&
+      (isValidAssetUrl(candidate.loginHeroImageUrl.trim()) || isValidImageDataUrl(candidate.loginHeroImageUrl.trim()))
+        ? candidate.loginHeroImageUrl.trim()
+        : undefined,
+    loginEyebrow: normalizeShortText(candidate.loginEyebrow, 48),
+    loginHeading: normalizeShortText(candidate.loginHeading, 140),
+    loginBody: normalizeShortText(candidate.loginBody, 320),
     paletteId: typeof candidate.paletteId === 'string' && candidate.paletteId.trim() ? candidate.paletteId.trim() : DEFAULT_SETTINGS.paletteId,
+    customAccentHex:
+      typeof candidate.customAccentHex === 'string' && /^#[0-9a-fA-F]{6}$/.test(candidate.customAccentHex.trim())
+        ? candidate.customAccentHex.trim()
+        : undefined,
   };
 };
 
@@ -97,6 +130,10 @@ export async function PATCH(request: Request) {
   const auth = await requireAuth(request, fakeRes);
   if (!auth) return authResponse ?? new Response(JSON.stringify({ error: 'Authentication required' }), { status: 401, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
 
+  if (!checkRateLimit(`${getClientIp(request)}:org-settings`, 30, 60_000)) {
+    return new Response(JSON.stringify({ error: 'Too many requests' }), { status: 429, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
+  }
+
   try {
     const body = (await request.json()) as StoredSettings | Partial<StoredSettings>;
     const tenantId = typeof body.tenantId === 'string' && body.tenantId.trim() ? body.tenantId.trim() : 'default';
@@ -134,5 +171,3 @@ export async function PATCH(request: Request) {
 export async function OPTIONS(request: Request) {
   return new Response(null, { status: 200, headers: getCorsHeaders(request) });
 }
-
-
