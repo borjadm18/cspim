@@ -43,20 +43,21 @@ const getTenantConfig = (tenantId: string): TenantConfig | null =>
   TENANT_MAP[tenantId] || TENANT_MAP[DEFAULT_TENANT] || null;
 
 const assetTokenCache = new Map<string, { token: string; expiresAt: number }>();
+const assetUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 const getBaseUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://api.test.bluestonepim.com' : 'https://api.bluestonepim.com');
 const getTokenUrl = (env: TenantConfig['env']) => (env === 'test' ? 'https://idp.test.bluestonepim.com/op/token' : 'https://idp.bluestonepim.com/op/token');
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-const fetchWithRetry = async (input: RequestInfo | URL, init: RequestInit, attempts = 3, timeoutMs = 10000) => {
+const fetchWithRetry = async (input: string | URL, init: RequestInit, attempts = 3, timeoutMs = 10000) => {
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       const controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), timeoutMs);
+      timeout = setTimeout(() => controller.abort(new Error(`Asset request timeout after ${timeoutMs}ms`)), timeoutMs);
       const response = await fetch(input, {
         ...init,
         signal: controller.signal,
@@ -141,6 +142,15 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
+    const previewCacheKey = `${tenant.env}:${tenant.orgId}:${tenant.context || 'en'}:${assetId}`;
+    const cachedUrl = assetUrlCache.get(previewCacheKey);
+    if (cachedUrl && Date.now() < cachedUrl.expiresAt) {
+      res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+      res.writeHead(307, { Location: cachedUrl.url });
+      res.end();
+      return;
+    }
+
     const token = await getCachedToken(tenant);
     const response = await fetchWithRetry(`${getBaseUrl(tenant.env)}/media-bank/assets/download`, {
       method: 'POST',
@@ -167,6 +177,11 @@ export default async function handler(req: any, res: any) {
       res.status(404).json({ error: 'Asset URL not found' });
       return;
     }
+
+    assetUrlCache.set(previewCacheKey, {
+      url: asset.presignedUrl,
+      expiresAt: Date.now() + 45 * 60 * 1000,
+    });
 
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
     res.writeHead(307, { Location: asset.presignedUrl });
