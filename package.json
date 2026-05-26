@@ -11,7 +11,8 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json"
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "check:sync": "node -e \"const fs=require('fs');const a=fs.readFileSync('api/_lib/catalogUtils.ts','utf8').replace(/\\/\\/.*$/gm,'').replace(/^\\s*$/gm,'').trim();const b=fs.readFileSync('src/features/catalog/selectors/catalogSelectors.ts','utf8').replace(/\\/\\/.*$/gm,'').replace(/^\\s*$/gm,'').trim();const aFns=[...a.matchAll(/^export const (\\w+)/gm)].map(m=>m[1]).sort();const bFns=[...b.matchAll(/^export const (\\w+)/gm)].map(m=>m[1]).sort();const onlyInA=aFns.filter(f=>!bFns.includes(f));const onlyInB=bFns.filter(f=>!aFns.includes(f));if(onlyInA.length||onlyInB.length){console.warn('SYNC DRIFT — catalogUtils vs catalogSelectors');onlyInA.forEach(f=>console.warn(' + catalogUtils only:',f));onlyInB.forEach(f=>console.warn(' + catalogSelectors only:',f));process.exit(1);}else{console.log('OK — catalogUtils and catalogSelectors exports are in sync');}\""
   },
   "dependencies": {
     "@supabase/auth-helpers-react": "^0.15.0",

@@ -3,41 +3,19 @@
 // cross-directory ESM resolution issues in Vercel @vercel/node compilation.
 // Keep in sync with the source file when logic changes.
 
+import type {
+  Product,
+  ProductAttribute,
+  ProductAttachment,
+  ProductImage,
+} from '../../src/features/catalog/api/productService.js';
+
 type AnyRecord = Record<string, unknown>;
 
-type Product = AnyRecord & {
-  id: string;
-  name: string;
-  sku?: string;
-  number?: string;
-  type?: string;
-  brand?: string;
-  category?: string;
-  description?: string;
-  images?: ProductImage[];
-  attributes?: AnyRecord[];
-  variants?: Product[];
-  variantParentId?: string;
-  stock?: number;
-  hasImage?: boolean;
-  hasDocument?: boolean;
-  hasAsset?: boolean;
-  assets?: string[];
-};
-
-type ProductImage = AnyRecord & {
-  id?: string;
-  url?: string;
-  alt?: string;
-  isPrimary?: boolean;
-};
-
-type ProductAttachment = AnyRecord & {
-  id?: string;
-  name?: string;
-  url?: string;
-  type?: string;
-};
+const toAttributeRecord = (attributes: Product['attributes']): Record<string, unknown> =>
+  attributes && typeof attributes === 'object' && !Array.isArray(attributes)
+    ? (attributes as Record<string, unknown>)
+    : {};
 
 export type BrandOption = { id: string; label: string; count: number };
 export type CategoryOption = { id: string; label: string; count: number };
@@ -107,7 +85,7 @@ export const getProductBrand = (product: Product) => {
 
   const attributes = Array.isArray(product.attributes)
     ? product.attributes
-    : Object.entries((product.attributes as AnyRecord) || {}).map(([name, value]) => ({ name, value }));
+    : Object.entries(toAttributeRecord(product.attributes)).map(([name, value]) => ({ name, value }));
 
   const brandAttribute = attributes.find((attribute: AnyRecord) => {
     const name = normalizeKey(attribute.name || attribute.label);
@@ -145,7 +123,7 @@ export const getVariantFinishLabel = (product: Product) => {
   const parentName = normalizeKey(product.name);
   const attributes = Array.isArray(product.attributes)
     ? product.attributes
-    : Object.entries((product.attributes as AnyRecord) || {}).map(([key, value]) => ({
+    : Object.entries(toAttributeRecord(product.attributes)).map(([key, value]) => ({
         key,
         name: key,
         label: key,
@@ -200,7 +178,7 @@ export const getVariantSwatchColor = (product: Product, fallbackIndex = 0) => {
 
   const attributes = Array.isArray(product.attributes)
     ? product.attributes
-    : Object.entries((product.attributes as AnyRecord) || {}).map(([name, value]) => ({ name, value }));
+    : Object.entries(toAttributeRecord(product.attributes)).map(([name, value]) => ({ name, value }));
 
   const colorAttribute = attributes.find((attribute: AnyRecord) => {
     const name = normalizeKey(attribute.definitionName || attribute.name || attribute.label || attribute.definitionId || '');
@@ -639,6 +617,15 @@ export const resolveCategorySelectionIds = (selectedCategory: string, categoryTr
   return [selectedCategory];
 };
 
+export const getPrimaryCategoryLabel = (product: Product, categoryLabelMap: Record<string, string> = {}) => {
+  const categoryIds = Array.isArray((product as AnyRecord).categories) ? (product as AnyRecord).categories as string[] : [];
+  for (const categoryId of categoryIds) {
+    const label = categoryLabelMap[categoryId];
+    if (label) return label;
+  }
+  return cleanText((product as AnyRecord).category || '').trim() || 'Sin categoría';
+};
+
 export const buildTypeOptions = (products: Product[]): TypeOption[] => {
   const groupedProducts = groupProductsForDisplay(products);
   const variantGroupCount = groupedProducts.filter(product => (product as AnyRecord).isVariantGroup).length;
@@ -801,7 +788,7 @@ export const filterProducts = (
 
       const attributes = Array.isArray(product.attributes)
         ? product.attributes
-        : Object.entries((product.attributes as AnyRecord) || {}).map(([name, value]) => ({ name, value }));
+        : Object.entries(toAttributeRecord(product.attributes)).map(([name, value]) => ({ name, value }));
 
       return attributes.some((attribute: AnyRecord) => {
         return matchesStructuredQuery([
@@ -836,8 +823,8 @@ export const filterProducts = (
           : []),
         (product as AnyRecord).attributeText,
         ...(Array.isArray(product.attributes)
-          ? product.attributes.map((attr: AnyRecord) => `${attr.definitionName || attr.name || attr.label || ''} ${attr.displayValue ?? attr.value ?? attr.values ?? ''}`)
-          : Object.entries((product.attributes as AnyRecord) || {}).map(([name, value]) => `${name} ${value}`)),
+          ? product.attributes.map((attr: ProductAttribute & { values?: unknown }) => `${attr.definitionName || attr.name || attr.label || ''} ${attr.displayValue ?? attr.value ?? attr.values ?? ''}`)
+          : Object.entries(toAttributeRecord(product.attributes)).map(([name, value]) => `${name} ${value}`)),
       ]
         .join(' ')
         .toLowerCase();

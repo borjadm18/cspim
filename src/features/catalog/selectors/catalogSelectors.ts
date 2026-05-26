@@ -3,6 +3,7 @@ import type {
   BrandOption,
   CategoryOption,
   CategoryTreeNode,
+  FacetOption,
   MediaFilter,
   QuickFilter,
   StatusOption,
@@ -695,6 +696,31 @@ export const buildStatusOptions = (products: Product[]): StatusOption[] => {
       label: getProductStatusLabel(status),
       count,
     }));
+};
+
+export const buildFacetOptions = (products: Product[], selector: (product: Product) => unknown): FacetOption[] => {
+  const countMap = new Map<string, number>();
+  for (const product of products) {
+    const value = cleanText(selector(product)).trim();
+    if (value) countMap.set(value, (countMap.get(value) ?? 0) + 1);
+  }
+  return [...countMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'es'))
+    .map(([id, count]) => ({ id, label: id, count }));
+};
+
+export const buildPriceRange = (products: Product[]): { min: number; max: number } => {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const product of products) {
+    const raw = (product as any).price;
+    const price = raw === null || raw === undefined || raw === '' ? null : Number(raw);
+    if (price === null || !Number.isFinite(price)) continue;
+    if (price < min) min = price;
+    if (price > max) max = price;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return { min: 0, max: 0 };
+  return { min, max };
 };
 
 export const filterProducts = (
