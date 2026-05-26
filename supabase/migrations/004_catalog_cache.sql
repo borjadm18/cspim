@@ -1,4 +1,4 @@
-create table catalog_cache (
+create table if not exists public.catalog_cache (
   tenant_key text primary key,
   products jsonb not null,
   fetched_at timestamptz not null default now()

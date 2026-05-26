@@ -1,7 +1,6 @@
 create extension if not exists pgcrypto;
 
--- Tenants
-create table tenants (
+create table if not exists public.tenants (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   slug text not null unique,
@@ -12,36 +11,59 @@ create table tenants (
   created_at timestamptz default now()
 );
 
--- Profiles (extiende auth.users de Supabase)
-create table profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
-  tenant_id uuid not null references tenants(id),
+  tenant_id uuid not null references public.tenants(id),
   role text not null check (role in ('superadmin', 'admin', 'content_manager', 'comercial')),
   full_name text,
   created_at timestamptz default now()
 );
 
--- Row Level Security
-alter table tenants enable row level security;
-alter table profiles enable row level security;
+alter table public.tenants enable row level security;
+alter table public.profiles enable row level security;
 
--- Un usuario solo ve su propio tenant
-create policy "tenant isolation" on tenants
-  for select using (
-    id = (select tenant_id from profiles where id = auth.uid())
-  );
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'tenants'
+      and policyname = 'tenant isolation'
+  ) then
+    create policy "tenant isolation" on public.tenants
+      for select using (
+        id = (select tenant_id from public.profiles where id = auth.uid())
+      );
+  end if;
 
-create policy "own profile" on profiles
-  for select using (id = auth.uid());
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'profiles'
+      and policyname = 'own profile'
+  ) then
+    create policy "own profile" on public.profiles
+      for select using (id = auth.uid());
+  end if;
 
--- Superadmin ve todo (gestionar desde Supabase dashboard)
-create policy "superadmin all tenants" on tenants
-  for all using (
-    exists (
-      select 1 from profiles
-      where id = auth.uid() and role = 'superadmin'
-    )
-  );
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'tenants'
+      and policyname = 'superadmin all tenants'
+  ) then
+    create policy "superadmin all tenants" on public.tenants
+      for all using (
+        exists (
+          select 1 from public.profiles
+          where id = auth.uid() and role = 'superadmin'
+        )
+      );
+  end if;
+end $$;
 
 create or replace function public.custom_jwt_claims()
 returns jsonb
@@ -49,9 +71,9 @@ language plpgsql
 stable
 as $$
 declare
-  profile_row profiles%rowtype;
+  profile_row public.profiles%rowtype;
 begin
-  select * into profile_row from profiles where id = auth.uid();
+  select * into profile_row from public.profiles where id = auth.uid();
   return jsonb_build_object(
     'tenant_id', profile_row.tenant_id,
     'role', profile_row.role
