@@ -126,6 +126,7 @@ const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 120;
 const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
 const SUPABASE_CACHE_TTL_MS = 30 * 60 * 1000;
+const SLIM_CACHE_TTL_MS = 25 * 60 * 1000;
 const REFRESH_GRACE_MS = 2 * 60 * 60 * 1000;
 const BLUESTONE_TIMEOUT_MS = 20_000;
 const BLUESTONE_ATTEMPTS = 4;
@@ -134,6 +135,7 @@ const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 1;
 const definitionCache = new Map<string, Promise<Map<string, DefinitionRecord>>>();
 const catalogCache = new Map<string, CatalogCacheEntry>();
 const refreshInFlight = new Map<string, Promise<CatalogCacheEntry>>();
+const slimBuildInFlight = new Map<string, Promise<CatalogCacheEntry>>();
 const accessTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 let supabaseAdminClient: ReturnType<typeof createClient> | null | undefined;
@@ -1059,6 +1061,30 @@ const readSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | 
   }
 };
 
+const readSlimSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | null> => {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return null;
+  try {
+    const { data } = await (supabase as ReturnType<typeof createClient>)
+      .from('catalog_index')
+      .select('products, fetched_at')
+      .eq('tenant_key', cacheKey)
+      .maybeSingle();
+
+    const row = data as { products?: unknown; fetched_at?: string } | null;
+    if (!row?.products || !row.fetched_at) return null;
+
+    const products = Array.isArray(row.products) ? (row.products as Product[]) : [];
+    return {
+      data: products,
+      meta: { ...buildCatalogBaseMeta(products), slim: true },
+      fetchedAt: new Date(String(row.fetched_at)).getTime(),
+    };
+  } catch {
+    return null;
+  }
+};
+
 const persistSupabaseCache = async (cacheKey: string, entry: CatalogCacheEntry) => {
   const supabase = getSupabaseAdmin();
   if (!supabase) return;
@@ -1072,6 +1098,95 @@ const persistSupabaseCache = async (cacheKey: string, entry: CatalogCacheEntry) 
   } catch {
     // Keep runtime resilient until every environment has the latest migration.
   }
+};
+
+const persistSlimSupabaseCache = async (cacheKey: string, entry: CatalogCacheEntry) => {
+  const supabase = getSupabaseAdmin();
+  if (!supabase) return;
+  try {
+    await ((supabase as ReturnType<typeof createClient>).from('catalog_index') as any).upsert({
+      tenant_key: cacheKey,
+      products: entry.data,
+      fetched_at: new Date(entry.fetchedAt).toISOString(),
+    });
+  } catch {
+    // Keep runtime resilient until every environment has the latest migration.
+  }
+};
+
+const buildSlimCatalogIndex = (tenant: TenantConfig, cacheKey: string): Promise<CatalogCacheEntry> => {
+  const existing = slimBuildInFlight.get(cacheKey);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const token = await getAccessToken(tenant);
+    const baseUrl = getBaseUrl(tenant.env);
+    const allProducts: Record<string, unknown>[] = [];
+    let cursor: string | null = null;
+
+    do {
+      const body = cursor
+        ? { cursor, count: 100, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] }
+        : { count: 100, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] };
+
+      const response = await fetchWithRetry(`${baseUrl}/pim/products/cursor/views/all`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+          'x-organization-id': tenant.orgId,
+          context: tenant.context || 'en',
+          'context-fallback': 'true',
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Bluestone slim products request failed (${response.status}): ${await response.text()}`);
+      }
+
+      const payload = (await response.json()) as {
+        nextCursor?: string | null;
+        cursor?: string | null;
+        data?: unknown[];
+        results?: unknown[];
+        items?: unknown[];
+      };
+      const batch = normalizeProductBatch(payload) as Record<string, unknown>[];
+      allProducts.push(...batch);
+      cursor = payload?.nextCursor || payload?.cursor || null;
+    } while (cursor);
+
+    const normalizedProducts = allProducts
+      .map(product => {
+        const assetIds = extractPreviewAssetIds(product);
+        const embeddedMedia = extractEmbeddedMedia(product);
+        const media =
+          embeddedMedia.images.length > 0 || embeddedMedia.attachments.length > 0
+            ? embeddedMedia
+            : { images: [], attachments: [] };
+
+        return normalizeCatalogProduct(product, media, [], {
+          assetIds,
+          includeAttributes: false,
+          includeMediaUrls: false,
+        });
+      })
+      .filter(product => !isTestProduct(product));
+
+    const entry: CatalogCacheEntry = {
+      data: normalizedProducts,
+      meta: { ...buildCatalogBaseMeta(normalizedProducts), slim: true },
+      fetchedAt: Date.now(),
+    };
+
+    await persistSlimSupabaseCache(cacheKey, entry);
+    return entry;
+  })();
+
+  slimBuildInFlight.set(cacheKey, promise);
+  return promise.finally(() => slimBuildInFlight.delete(cacheKey));
 };
 
 const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
@@ -1201,7 +1316,17 @@ const getCatalogIndex = async (tenant: TenantConfig, options?: { forceRefresh?: 
     return supabaseEntry;
   }
 
-  return refreshCatalogIndex(tenant, cacheKey);
+  // Cold start: try slim index for a fast response while full index builds
+  const slimEntry = await readSlimSupabaseCache(cacheKey);
+  if (slimEntry && Date.now() - slimEntry.fetchedAt < SLIM_CACHE_TTL_MS) {
+    void refreshCatalogIndex(tenant, cacheKey).catch(() => {});
+    return slimEntry;
+  }
+
+  // True cold start: build slim (~5-15s), return it, trigger full build in background
+  const slim = await buildSlimCatalogIndex(tenant, cacheKey);
+  void refreshCatalogIndex(tenant, cacheKey).catch(() => {});
+  return slim;
 };
 
 const fetchProductDetail = async (tenant: TenantConfig, productId: string) => {
