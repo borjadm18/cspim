@@ -1,0 +1,77 @@
+{
+"brand": {
+"name": "Content Store",
+"tagline": "Connected to your PIM"
+},
+"colors": {
+"primary": "#00B7A7",
+"secondary": "#8B5CF6",
+"accent": "#4E6BFF",
+"background": "#0D1117",
+"surface": "#111827",
+"surfaceSecondary": "#1A2233",
+"border": "#273244",
+"text": "#F5F7FA",
+"textSecondary": "#A8B3C7",
+"success": "#00C48C",
+"warning": "#FFB020",
+"error": "#FF5C7A"
+},
+"gradients": {
+"primary": "linear-gradient(135deg, #00B7A7 0%, #4E6BFF 50%, #8B5CF6 100%)",
+"surface": "linear-gradient(180deg, #111827 0%, #0D1117 100%)"
+},
+"typography": {
+"fontPrimary": "Inter",
+"fontSecondary": "Geist",
+"sizes": {
+"xs": "12px",
+"sm": "14px",
+"md": "16px",
+"lg": "20px",
+"xl": "28px",
+"xxl": "40px",
+"hero": "64px"
+},
+"weights": {
+"regular": 400,
+"medium": 500,
+"semibold": 600,
+"bold": 700
+}
+},
+"radius": {
+"sm": "8px",
+"md": "14px",
+"lg": "20px",
+"xl": "28px"
+},
+"spacing": {
+"xs": "4px",
+"sm": "8px",
+"md": "16px",
+"lg": "24px",
+"xl": "40px",
+"xxl": "64px"
+},
+"shadows": {
+"card": "0 8px 30px rgba(0,0,0,0.18)",
+"hover": "0 12px 40px rgba(0,0,0,0.28)"
+},
+"buttons": {
+"height": "44px",
+"radius": "14px",
+"padding": "0 18px"
+},
+"layout": {
+"maxWidth": "1440px",
+"sidebarWidth": "280px",
+"headerHeight": "72px"
+},
+"motion": {
+"fast": "120ms",
+"normal": "220ms",
+"slow": "420ms",
+"easing": "cubic-bezier(0.4, 0, 0.2, 1)"
+}
+}
