@@ -1,5 +1,6 @@
 import { requireAuth } from './_lib/auth.js';
 import { checkRateLimit, getClientIp } from './_lib/rateLimit.js';
+import { initSentry, Sentry } from './_lib/sentry.js';
 
 type TenantConfig = {
   clientId: string;
@@ -120,6 +121,8 @@ const getCachedToken = async (tenant: TenantConfig): Promise<string> => {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export default async function handler(req: any, res: any) {
+  initSentry();
+
   const auth = await requireAuth(req, res);
   if (!auth) return;
 
@@ -187,7 +190,9 @@ export default async function handler(req: any, res: any) {
     res.writeHead(307, { Location: asset.presignedUrl });
     res.end();
   } catch (err: unknown) {
+    Sentry.captureException(err);
     console.error('[asset] Internal error:', err);
+    await Sentry.flush(1500);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
