@@ -37,6 +37,8 @@ export type FacetOption = {
   count: number;
 };
 
+export type TextMatchOperator = 'contains' | 'is' | 'starts_with' | 'is_not';
+
 export type PriceRange = {
   min: number;
   max: number;
@@ -51,6 +53,11 @@ export type CatalogSettings = {
   pageSize: number;
   density: 'comfortable' | 'compact';
   logoUrl?: string;
+  faviconUrl?: string;
+  loginHeroImageUrl?: string;
+  loginEyebrow?: string;
+  loginHeading?: string;
+  loginBody?: string;
   paletteId: string;
   customAccentHex?: string;
 };
@@ -60,8 +67,10 @@ export type SavedViewSnapshot = {
   searchTerm: string;
   selectedName: string;
   selectedNumber: string;
+  selectedNumberOperator: TextMatchOperator;
   selectedCollection: string;
   selectedRange: string;
+  selectedVariantGroup: string;
   selectedPriceMin: string;
   selectedPriceMax: string;
   selectedEan: string;
@@ -103,8 +112,10 @@ export type CatalogQueryParams = {
   searchTerm: string;
   selectedName: string;
   selectedNumber: string;
+  selectedNumberOperator: TextMatchOperator;
   selectedCollection: string;
   selectedRange: string;
+  selectedVariantGroup: string;
   selectedPriceMin: string;
   selectedPriceMax: string;
   selectedEan: string;
@@ -129,6 +140,7 @@ export type CatalogPageMeta = {
   categoryLabelMap: Record<string, string>;
   brandOptions: BrandOption[];
   rangeOptions: FacetOption[];
+  variantGroupOptions: FacetOption[];
   flowOptions: FacetOption[];
   finishOptions: FacetOption[];
   priceRange: PriceRange;

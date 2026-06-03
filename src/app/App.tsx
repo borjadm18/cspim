@@ -1,15 +1,20 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Package, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, LayoutGrid, Package, Plus, SlidersHorizontal, Table2, X } from 'lucide-react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { LoadingSpinner } from '../shared/ui/LoadingSpinner';
 import { ErrorMessage } from '../shared/ui/ErrorMessage';
 import { ErrorBoundary } from '../shared/ui/ErrorBoundary';
 import { FiltersSidebar } from '../features/catalog/ui/FiltersSidebar';
 import { ProductCard } from '../features/catalog/ui/ProductCard';
+import { ProductTable } from '../features/catalog/ui/ProductTable';
 import { CatalogHeader } from '../features/catalog/ui/CatalogHeader';
 import { CatalogSidebar } from '../features/catalog/ui/CatalogSidebar';
-import { CatalogSettingsModal } from '../features/catalog/ui/CatalogSettingsModal';
-import { UserProfileModal } from '../features/catalog/ui/UserProfileModal';
+const CatalogSettingsModal = lazy(() =>
+  import('../features/catalog/ui/CatalogSettingsModal').then(m => ({ default: m.CatalogSettingsModal }))
+);
+const UserProfileModal = lazy(() =>
+  import('../features/catalog/ui/UserProfileModal').then(m => ({ default: m.UserProfileModal }))
+);
 import { useCatalog } from '../features/catalog/state/useCatalog';
 import { useAuth } from '../hooks/useAuth';
 import { useTenantBranding } from '../hooks/useTenantBranding';
@@ -63,8 +68,10 @@ function CatalogPage() {
     searchTerm,
     selectedName,
     selectedNumber,
+    selectedNumberOperator,
     selectedCollection,
     selectedRange,
+    selectedVariantGroup,
     selectedPriceMin,
     selectedPriceMax,
     selectedEan,
@@ -73,8 +80,10 @@ function CatalogPage() {
     setSearchTerm,
     setSelectedName,
     setSelectedNumber,
+    setSelectedNumberOperator,
     setSelectedCollection,
     setSelectedRange,
+    setSelectedVariantGroup,
     setSelectedPriceMin,
     setSelectedPriceMax,
     setSelectedEan,
@@ -101,6 +110,7 @@ function CatalogPage() {
     setIsSettingsOpen,
     brandOptions,
     rangeOptions,
+    variantGroupOptions,
     flowOptions,
     finishOptions,
     priceRange,
@@ -115,6 +125,8 @@ function CatalogPage() {
     reloadProducts,
     settings,
     setSettings,
+    saveSettings,
+    settingsSaveState,
     savedViews,
     savedViewName,
     setSavedViewName,
@@ -142,6 +154,8 @@ function CatalogPage() {
   const [isProductDirty, setIsProductDirty] = useState(false);
   const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
   const [isSavedViewsOpen, setIsSavedViewsOpen] = useState(false);
+  const [isSaveViewOpen, setIsSaveViewOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const activeFilterCount = [
     searchTerm.trim(),
@@ -149,6 +163,7 @@ function CatalogPage() {
     selectedNumber.trim(),
     selectedCollection.trim(),
     selectedRange.trim(),
+    selectedVariantGroup.trim(),
     selectedPriceMin.trim(),
     selectedPriceMax.trim(),
     selectedEan.trim(),
@@ -163,8 +178,7 @@ function CatalogPage() {
   ].filter(Boolean).length;
   const closingProductIdRef = useRef<string | null>(null);
   const visibleCatalogCount = totalCatalogCount;
-  const queryParams = new URLSearchParams(location.search);
-  const productIdFromUrl = queryParams.get('producto');
+  const productIdFromUrl = useMemo(() => new URLSearchParams(location.search).get('producto'), [location.search]);
   const selectedDisplayProductId = selectedProduct?.variantParentId || selectedProduct?.id || '';
   const selectedProductIndex = selectedProduct
     ? displayProducts.findIndex(product => product.id === selectedDisplayProductId)
@@ -198,26 +212,27 @@ function CatalogPage() {
     updateProductUrl(null);
   }, [selectedProduct, setSelectedProduct, updateProductUrl]);
 
-  const handlePrevProduct = () => {
+  const handlePrevProduct = useCallback(() => {
     if (selectedProductIndex <= 0) return;
     const previousProduct = displayProducts[selectedProductIndex - 1] || null;
     if (!previousProduct) return;
     handleOpenProduct(previousProduct);
-  };
+  }, [selectedProductIndex, displayProducts, handleOpenProduct]);
 
-  const handleNextProduct = () => {
+  const handleNextProduct = useCallback(() => {
     if (selectedProductIndex < 0 || selectedProductIndex >= displayProducts.length - 1) return;
     const nextProduct = displayProducts[selectedProductIndex + 1] || null;
     if (!nextProduct) return;
     handleOpenProduct(nextProduct);
-  };
-  const handleSaveProduct = (patch: Partial<Product>) => {
+  }, [selectedProductIndex, displayProducts, handleOpenProduct]);
+
+  const handleSaveProduct = useCallback((patch: Partial<Product>) => {
     if (!selectedProduct) return;
     updateProduct(selectedProduct.id, patch);
     showToast('Cambios guardados', 'success');
-  };
+  }, [selectedProduct, updateProduct, showToast]);
 
-  const handleTenantChange = async (tenantId: string) => {
+  const handleTenantChange = useCallback(async (tenantId: string) => {
     if (isProductDirty && selectedProduct) {
       const ok = await confirm({
         message: 'Hay cambios sin guardar en el producto abierto. ¿Cambiar de tenant de todas formas?',
@@ -227,7 +242,18 @@ function CatalogPage() {
       if (!ok) return;
     }
     setSelectedTenantId(tenantId);
-  };
+  }, [isProductDirty, selectedProduct, confirm, setSelectedTenantId]);
+
+  const handleSaveSettings = useCallback(async () => {
+    const ok = await saveSettings();
+    if (ok) {
+      setIsSettingsOpen(false);
+      showToast('Ajustes guardados', 'success');
+      return;
+    }
+
+    showToast('No se pudieron guardar los ajustes', 'error');
+  }, [saveSettings, showToast]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -318,12 +344,12 @@ function CatalogPage() {
   const gridGapClass = settings.density === 'compact' ? 'gap-4' : 'gap-6';
   const theme = resolveCatalogTheme(settings.paletteId, settings.customAccentHex);
   const sortControl = (
-    <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-white px-3 py-2 shadow-sm">
+    <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 shadow-sm">
       <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Ordenar por</span>
       <select
         value={sortBy}
         onChange={event => setSortBy(event.target.value as CatalogSortKey)}
-        className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
+        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm font-medium text-slate-700 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
       >
         <option value="relevance">Relevancia</option>
         <option value="name_asc">{'Nombre A→Z'}</option>
@@ -373,6 +399,7 @@ function CatalogPage() {
                 summaryWithImagesCount={withImagesCount}
                 brandOptions={brandOptions}
                 rangeOptions={rangeOptions}
+                variantGroupOptions={variantGroupOptions}
                 flowOptions={flowOptions}
                 finishOptions={finishOptions}
                 priceRange={priceRange}
@@ -393,11 +420,15 @@ function CatalogPage() {
                 selectedName={selectedName}
                 onNameChange={setSelectedName}
                 selectedNumber={selectedNumber}
+                selectedNumberOperator={selectedNumberOperator}
                 onNumberChange={setSelectedNumber}
+                onNumberOperatorChange={setSelectedNumberOperator}
                 selectedCollection={selectedCollection}
                 onCollectionChange={setSelectedCollection}
                 selectedRange={selectedRange}
                 onRangeChange={setSelectedRange}
+                selectedVariantGroup={selectedVariantGroup}
+                onVariantGroupChange={setSelectedVariantGroup}
                 selectedPriceMin={selectedPriceMin}
                 onPriceMinChange={setSelectedPriceMin}
                 selectedPriceMax={selectedPriceMax}
@@ -462,12 +493,69 @@ function CatalogPage() {
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onSignOut={signOut}
               >
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+                    <button type="button" onClick={() => setViewMode('grid')} aria-label="Vista en cuadrícula"
+                      className={`rounded-lg p-2 transition ${viewMode === 'grid' ? 'bg-[color:var(--catalog-accent)] text-white shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}>
+                      <LayoutGrid className="h-4 w-4" />
+                    </button>
+                    <button type="button" onClick={() => setViewMode('table')} aria-label="Vista en tabla"
+                      className={`rounded-lg p-2 transition ${viewMode === 'table' ? 'bg-[color:var(--catalog-accent)] text-white shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}>
+                      <Table2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {savedViews.length > 0 && (
+                      <div className="relative">
+                        {isSavedViewsOpen && (<button type="button" className="fixed inset-0 z-20 cursor-default" aria-label="Cerrar selector de vistas" onClick={() => setIsSavedViewsOpen(false)} />)}
+                        <button type="button" onClick={() => setIsSavedViewsOpen(prev => !prev)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50">
+                          {activeSavedView ? activeSavedView.name : 'Vistas'}
+                          <ChevronDown className="h-3 w-3 text-slate-400" />
+                        </button>
+                        {isSavedViewsOpen && (
+                          <div className="absolute left-0 top-full z-30 mt-1 min-w-[160px] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                            {savedViews.map(view => (
+                              <button key={view.id} type="button" onClick={() => { applySavedView(view); setIsSavedViewsOpen(false); }}
+                                className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm font-medium transition hover:bg-slate-50 ${activeSavedView?.id === view.id ? 'text-[color:var(--catalog-accent)]' : 'text-slate-700'}`}>
+                                <span className="truncate">{view.name}</span>
+                                {activeSavedView?.id === view.id && (<span className="ml-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[color:var(--catalog-accent)]" />)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="relative">
+                      {isSaveViewOpen && (<button type="button" className="fixed inset-0 z-20 cursor-default" aria-label="Cerrar guardar vista" onClick={() => setIsSaveViewOpen(false)} />)}
+                      <button type="button" onClick={() => setIsSaveViewOpen(prev => !prev)}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50">
+                        <Plus className="h-3 w-3" />
+                        Guardar vista
+                      </button>
+                      {isSaveViewOpen && (
+                        <div className="absolute right-0 top-full z-30 mt-1 w-64 rounded-2xl border border-slate-200 bg-white p-3 shadow-lg">
+                          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Nombre de la vista</p>
+                          <input type="text" value={savedViewName} onChange={event => setSavedViewName(event.target.value)}
+                            onKeyDown={event => { if (event.key === 'Enter' && savedViewName.trim()) { saveCurrentView(); setIsSaveViewOpen(false); } if (event.key === 'Escape') setIsSaveViewOpen(false); }}
+                            placeholder="Ej. Solo ducha con archivos" autoFocus
+                            className="h-9 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:bg-white" />
+                          <button type="button" onClick={() => { saveCurrentView(); setIsSaveViewOpen(false); }} disabled={!savedViewName.trim()}
+                            className="mt-2 w-full rounded-xl bg-[color:var(--catalog-accent)] py-2 text-xs font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+                            Guardar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
                 <FiltersSidebar
                   products={products}
                   summaryProductsCount={totalCatalogCount}
                   summaryWithImagesCount={withImagesCount}
                   brandOptions={brandOptions}
                   rangeOptions={rangeOptions}
+                  variantGroupOptions={variantGroupOptions}
                   flowOptions={flowOptions}
                   finishOptions={finishOptions}
                   priceRange={priceRange}
@@ -488,11 +576,15 @@ function CatalogPage() {
                   selectedName={selectedName}
                   onNameChange={setSelectedName}
                   selectedNumber={selectedNumber}
+                  selectedNumberOperator={selectedNumberOperator}
                   onNumberChange={setSelectedNumber}
+                  onNumberOperatorChange={setSelectedNumberOperator}
                   selectedCollection={selectedCollection}
                   onCollectionChange={setSelectedCollection}
                   selectedRange={selectedRange}
                   onRangeChange={setSelectedRange}
+                  selectedVariantGroup={selectedVariantGroup}
+                  onVariantGroupChange={setSelectedVariantGroup}
                   selectedPriceMin={selectedPriceMin}
                   onPriceMinChange={setSelectedPriceMin}
                   selectedPriceMax={selectedPriceMax}
@@ -539,9 +631,18 @@ function CatalogPage() {
                 <div className="mb-3 flex flex-wrap items-center gap-2">
                   {searchTerm.trim() ? <FilterChip label={`"${searchTerm}"`} onRemove={() => { setSearchTerm(''); commitSearchTerm(''); }} /> : null}
                   {selectedName.trim() ? <FilterChip label={`Nombre: ${selectedName}`} onRemove={() => setSelectedName('')} /> : null}
-                  {selectedNumber.trim() ? <FilterChip label={`SKU: ${selectedNumber}`} onRemove={() => setSelectedNumber('')} /> : null}
+                  {selectedNumber.trim() ? (
+                    <FilterChip
+                      label={`SKU (${selectedNumberOperator.replace('_', ' ').toUpperCase()}): ${selectedNumber}`}
+                      onRemove={() => {
+                        setSelectedNumber('');
+                        setSelectedNumberOperator('contains');
+                      }}
+                    />
+                  ) : null}
                   {selectedCollection.trim() ? <FilterChip label={`Colección: ${selectedCollection}`} onRemove={() => setSelectedCollection('')} /> : null}
                   {selectedRange.trim() ? <FilterChip label={`Gama: ${rangeOptions.find(option => option.id === selectedRange)?.label ?? selectedRange}`} onRemove={() => setSelectedRange('')} /> : null}
+                  {selectedVariantGroup.trim() ? <FilterChip label={`Variant group: ${variantGroupOptions.find(option => option.id === selectedVariantGroup)?.label ?? selectedVariantGroup}`} onRemove={() => setSelectedVariantGroup('')} /> : null}
                   {selectedPriceMin.trim() ? <FilterChip label={`Precio mín.: ${selectedPriceMin} €`} onRemove={() => setSelectedPriceMin('')} /> : null}
                   {selectedPriceMax.trim() ? <FilterChip label={`Precio máx.: ${selectedPriceMax} €`} onRemove={() => setSelectedPriceMax('')} /> : null}
                   {selectedEan.trim() ? <FilterChip label={`EAN: ${selectedEan}`} onRemove={() => setSelectedEan('')} /> : null}
@@ -558,48 +659,6 @@ function CatalogPage() {
                   </button>
                 </div>
               )}
-
-              <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
-                <div className="flex items-center gap-2">
-                  {savedViews.length > 0 && (
-                    <div className="relative">
-                      <button
-                        type="button"
-                        onClick={() => setIsSavedViewsOpen(prev => !prev)}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
-                      >
-                        Vistas ({savedViews.length})
-                      </button>
-                      {isSavedViewsOpen && (
-                        <div className="absolute right-0 top-full z-30 mt-1 min-w-[180px] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-lg">
-                          {(savedViews as any[]).map(view => (
-                            <button
-                              key={view.name}
-                              type="button"
-                              onClick={() => {
-                                applySavedView(view.name);
-                                setIsSavedViewsOpen(false);
-                              }}
-                              className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                            >
-                              {view.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  {activeFilterCount > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setIsSettingsOpen(true)}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)]/60 px-3 py-1.5 text-xs font-semibold text-[color:var(--catalog-accent)] transition hover:bg-[color:var(--catalog-accent-soft)]"
-                    >
-                      Guardar vista
-                    </button>
-                  )}
-                </div>
-              </div>
 
               {displayProducts.length === 0 ? (
                 <div className="rounded-[28px] border border-slate-200 bg-white px-8 py-16 text-center shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
@@ -636,17 +695,26 @@ function CatalogPage() {
                       Vista preliminar — el catálogo completo se carga en segundo plano y se actualizará automáticamente.
                     </div>
                   )}
-                  <div className={`grid grid-cols-1 ${gridGapClass} md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
-                    {paginatedProducts.map(product => (
-                      <ProductCard
-                        key={product.id}
-                        product={product}
-                        tenantId={selectedTenantId}
-                        categoryLabelMap={categoryLabelMap}
-                        onViewDetails={handleOpenProduct}
-                      />
-                    ))}
-                  </div>
+                  {viewMode === 'table' ? (
+                    <ProductTable
+                      products={paginatedProducts}
+                      tenantId={selectedTenantId}
+                      categoryLabelMap={categoryLabelMap}
+                      onViewDetails={handleOpenProduct}
+                    />
+                  ) : (
+                    <div className={`grid grid-cols-1 ${gridGapClass} md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
+                      {paginatedProducts.map(product => (
+                        <ProductCard
+                          key={product.id}
+                          product={product}
+                          tenantId={selectedTenantId}
+                          categoryLabelMap={categoryLabelMap}
+                          onViewDetails={handleOpenProduct}
+                        />
+                      ))}
+                    </div>
+                  )}
 
                   {totalPages > 1 && (
                     <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
@@ -759,31 +827,42 @@ function CatalogPage() {
         </ErrorBoundary>
       )}
 
-      <CatalogSettingsModal
-        open={isSettingsOpen}
-        settings={settings}
-        onChange={setSettings}
-        onClose={() => setIsSettingsOpen(false)}
-        onReset={restoreDefaultSettings}
-        savedViews={savedViews}
-        savedViewName={savedViewName}
-        onSavedViewNameChange={setSavedViewName}
-        onSaveView={saveCurrentView}
-        onApplyView={applySavedView}
-        onDeleteView={deleteSavedView}
-        onCopyCurrentViewLink={copyShareableLink}
-        shareableLink={shareableLink}
-        shareMessage={shareMessage}
-        shareError={shareError}
-      />
-      <UserProfileModal
-        open={isProfileOpen}
-        email={user?.email ?? null}
-        fullName={profile?.fullName ?? null}
-        role={profile?.role ?? null}
-        organizationName={tenantOptions.find(option => option.id === selectedTenantId)?.label ?? null}
-        onClose={() => setIsProfileOpen(false)}
-      />
+      {isSettingsOpen && (
+        <Suspense fallback={null}>
+          <CatalogSettingsModal
+            open={isSettingsOpen}
+            settings={settings}
+            onChange={setSettings}
+            onClose={() => setIsSettingsOpen(false)}
+            onReset={restoreDefaultSettings}
+            onSave={handleSaveSettings}
+            saveState={settingsSaveState}
+            tenantId={selectedTenantId}
+            savedViews={savedViews}
+            savedViewName={savedViewName}
+            onSavedViewNameChange={setSavedViewName}
+            onSaveView={saveCurrentView}
+            onApplyView={applySavedView}
+            onDeleteView={deleteSavedView}
+            onCopyCurrentViewLink={copyShareableLink}
+            shareableLink={shareableLink}
+            shareMessage={shareMessage}
+            shareError={shareError}
+          />
+        </Suspense>
+      )}
+      {isProfileOpen && (
+        <Suspense fallback={null}>
+          <UserProfileModal
+            open={isProfileOpen}
+            email={user?.email ?? null}
+            fullName={profile?.fullName ?? null}
+            role={profile?.role ?? null}
+            organizationName={tenantOptions.find(option => option.id === selectedTenantId)?.label ?? null}
+            onClose={() => setIsProfileOpen(false)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

@@ -11,8 +11,10 @@ export const DEFAULT_VIEW_SNAPSHOT: SavedViewSnapshot = {
   searchTerm: '',
   selectedName: '',
   selectedNumber: '',
+  selectedNumberOperator: 'contains',
   selectedCollection: '',
   selectedRange: '',
+  selectedVariantGroup: '',
   selectedPriceMin: '',
   selectedPriceMax: '',
   selectedEan: '',
@@ -35,8 +37,10 @@ const isSameSnapshot = (a: SavedViewSnapshot, b: SavedViewSnapshot) =>
   a.searchTerm === b.searchTerm &&
   a.selectedName === b.selectedName &&
   a.selectedNumber === b.selectedNumber &&
+  a.selectedNumberOperator === b.selectedNumberOperator &&
   a.selectedCollection === b.selectedCollection &&
   a.selectedRange === b.selectedRange &&
+  a.selectedVariantGroup === b.selectedVariantGroup &&
   a.selectedPriceMin === b.selectedPriceMin &&
   a.selectedPriceMax === b.selectedPriceMax &&
   a.selectedEan === b.selectedEan &&
@@ -52,7 +56,13 @@ const isSameSnapshot = (a: SavedViewSnapshot, b: SavedViewSnapshot) =>
   a.settings.pageSize === b.settings.pageSize &&
   a.settings.density === b.settings.density &&
   a.settings.logoUrl === b.settings.logoUrl &&
-  a.settings.paletteId === b.settings.paletteId;
+  a.settings.faviconUrl === b.settings.faviconUrl &&
+  a.settings.loginHeroImageUrl === b.settings.loginHeroImageUrl &&
+  a.settings.loginEyebrow === b.settings.loginEyebrow &&
+  a.settings.loginHeading === b.settings.loginHeading &&
+  a.settings.loginBody === b.settings.loginBody &&
+  a.settings.paletteId === b.settings.paletteId &&
+  a.settings.customAccentHex === b.settings.customAccentHex;
 
 const encodeShareableState = (state: SerializedViewState) =>
   window.btoa(unescape(encodeURIComponent(JSON.stringify(state))));
@@ -68,8 +78,10 @@ export const decodeShareableState = (value: string): SavedViewSnapshot | null =>
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings || {}) },
       selectedName: parsed.selectedName || '',
       selectedNumber: parsed.selectedNumber || '',
+      selectedNumberOperator: parsed.selectedNumberOperator || 'contains',
       selectedCollection: parsed.selectedCollection || '',
       selectedRange: parsed.selectedRange || '',
+      selectedVariantGroup: parsed.selectedVariantGroup || '',
       selectedPriceMin: parsed.selectedPriceMin || '',
       selectedPriceMax: parsed.selectedPriceMax || '',
       selectedEan: parsed.selectedEan || '',
@@ -107,8 +119,10 @@ const loadSavedViews = (): SavedView[] => {
         settings: { ...DEFAULT_SETTINGS, ...(v.settings || {}) },
         selectedName: v.selectedName || '',
         selectedNumber: v.selectedNumber || '',
+        selectedNumberOperator: v.selectedNumberOperator || 'contains',
         selectedCollection: v.selectedCollection || '',
         selectedRange: v.selectedRange || '',
+        selectedVariantGroup: v.selectedVariantGroup || '',
         selectedPriceMin: v.selectedPriceMin || '',
         selectedPriceMax: v.selectedPriceMax || '',
         selectedEan: v.selectedEan || '',

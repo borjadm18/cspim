@@ -1,7 +1,24 @@
 import { ChevronDown, Search, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type InputHTMLAttributes,
+  type KeyboardEventHandler,
+  type ReactNode,
+  type SelectHTMLAttributes,
+} from 'react';
 import type { Product } from '../api/productService';
-import type { BrandOption, CategoryTreeNode, FacetOption, MediaFilter, PriceRange, StatusOption, TypeOption } from '../model/catalogTypes';
+import type {
+  BrandOption,
+  CategoryTreeNode,
+  FacetOption,
+  MediaFilter,
+  PriceRange,
+  StatusOption,
+  TextMatchOperator,
+  TypeOption,
+} from '../model/catalogTypes';
 import { cleanText } from '../selectors/catalogSelectors';
 
 interface FiltersSidebarProps {
@@ -10,6 +27,7 @@ interface FiltersSidebarProps {
   summaryWithImagesCount?: number;
   brandOptions: BrandOption[];
   rangeOptions: FacetOption[];
+  variantGroupOptions: FacetOption[];
   flowOptions: FacetOption[];
   finishOptions: FacetOption[];
   priceRange: PriceRange;
@@ -30,11 +48,15 @@ interface FiltersSidebarProps {
   selectedName: string;
   onNameChange: (value: string) => void;
   selectedNumber: string;
+  selectedNumberOperator: TextMatchOperator;
   onNumberChange: (value: string) => void;
+  onNumberOperatorChange: (value: TextMatchOperator) => void;
   selectedCollection: string;
   onCollectionChange: (value: string) => void;
   selectedRange: string;
   onRangeChange: (value: string) => void;
+  selectedVariantGroup: string;
+  onVariantGroupChange: (value: string) => void;
   selectedPriceMin: string;
   onPriceMinChange: (value: string) => void;
   selectedPriceMax: string;
@@ -48,85 +70,187 @@ interface FiltersSidebarProps {
   selectedAttributeQuery: string;
   onAttributeQueryChange: (value: string) => void;
   onClearFilters: () => void;
+  embedded?: boolean;
 }
 
-type CategoryItem = {
-  id: string;
-  label: string;
-  path: string;
-  count: number;
-};
-
-const TYPE_TILES = [
-  { id: 'single', label: 'Simple' },
-  { id: 'variant', label: 'Con acabados' },
-  { id: 'bundle', label: 'Bundle' },
-];
-
-const STATUS_TILES = [
-  { id: 'draft', label: 'Borrador' },
-  { id: 'to-be-published', label: 'Por publicar' },
-  { id: 'published', label: 'Publicado' },
-  { id: 'archived', label: 'Archivado' },
-];
-
-const formatPriceValue = (value: number) =>
-  new Intl.NumberFormat('es-ES', {
-    maximumFractionDigits: 0,
-  }).format(Math.round(value));
+type CategoryItem = { id: string; label: string; path: string; count: number };
 
 const flattenTree = (nodes: CategoryTreeNode[], ancestors: string[] = []): CategoryItem[] =>
   nodes.flatMap(node => {
     const label = cleanText(node.label);
     const path = [...ancestors, label];
-    const current = {
-      id: node.id,
-      label,
-      path: cleanText(path.join(' / ')),
-      count: node.count,
-    };
-
-    return [current, ...flattenTree(node.children, path)];
+    return [
+      { id: node.id, label, path: cleanText(path.join(' / ')), count: node.count },
+      ...flattenTree(node.children, path),
+    ];
   });
 
 const matchScore = (item: CategoryItem, term: string) => {
   if (!term) return item.count;
-  const label = item.label.toLowerCase();
-  const path = item.path.toLowerCase();
-  if (label === term || path === term) return 1000 + item.count;
-  if (label.startsWith(term) || path.startsWith(term)) return 500 + item.count;
-  if (label.includes(term) || path.includes(term)) return 100 + item.count;
+  const l = item.label.toLowerCase(), p = item.path.toLowerCase();
+  if (l === term || p === term) return 1000 + item.count;
+  if (l.startsWith(term) || p.startsWith(term)) return 500 + item.count;
+  if (l.includes(term) || p.includes(term)) return 100 + item.count;
   return 0;
 };
 
-const FilterTile = ({
+const formatPrice = (v: number) =>
+  new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(Math.round(v));
+
+// ── Primitives ───────────────────────────────────────────────────────────────
+
+const FilterInput = (props: InputHTMLAttributes<HTMLInputElement>) => (
+  <input
+    {...props}
+    className={`h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-2 focus:ring-[color:var(--catalog-accent-soft)]/60 ${props.className ?? ''}`.trim()}
+  />
+);
+
+const FilterSelect = (props: SelectHTMLAttributes<HTMLSelectElement>) => (
+  <select
+    {...props}
+    className={`h-10 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-2 focus:ring-[color:var(--catalog-accent-soft)]/60 ${props.className ?? ''}`.trim()}
+  />
+);
+
+const SectionLabel = ({ children }: { children: ReactNode }) => (
+  <p className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-slate-500">{children}</p>
+);
+
+// ── Category Tree ────────────────────────────────────────────────────────────
+
+function CategoryTreeItem({
+  node,
+  depth = 0,
+  selectedCategory,
+  onCategoryChange,
+}: {
+  node: CategoryTreeNode;
+  depth?: number;
+  selectedCategory: string;
+  onCategoryChange: (id: string) => void;
+}) {
+  const isActive = selectedCategory === node.id;
+  const hasChildren = node.children.length > 0;
+  const childHasActive = hasChildren && (
+    node.children.some(c => c.id === selectedCategory || c.children.some(gc => gc.id === selectedCategory))
+  );
+  const [expanded, setExpanded] = useState(depth === 0 || childHasActive);
+
+  return (
+    <div>
+      <div
+        className={`flex items-center gap-1 rounded-lg transition ${isActive ? 'bg-[color:var(--catalog-accent-soft)]/80' : 'hover:bg-slate-50'}`}
+        style={{ paddingLeft: `${depth * 14}px` }}
+      >
+        <button
+          type="button"
+          onClick={() => hasChildren && setExpanded(v => !v)}
+          className={`flex h-6 w-6 shrink-0 items-center justify-center text-slate-400 transition ${!hasChildren ? 'invisible' : ''}`}
+          tabIndex={hasChildren ? 0 : -1}
+          aria-label={expanded ? 'Colapsar' : 'Expandir'}
+        >
+          <ChevronDown className={`h-3 w-3 transition-transform duration-150 ${expanded ? '' : '-rotate-90'}`} />
+        </button>
+        <button
+          type="button"
+          onClick={() => onCategoryChange(isActive ? 'all' : node.id)}
+          className={`flex flex-1 items-center justify-between py-1.5 pr-2 text-left text-sm transition ${
+            isActive ? 'font-semibold text-[color:var(--catalog-accent)]' : 'text-slate-700'
+          }`}
+        >
+          <span className="truncate">{cleanText(node.label)}</span>
+          <span className="ml-2 shrink-0 text-[11px] text-slate-400">{node.count}</span>
+        </button>
+      </div>
+      {hasChildren && expanded && (
+        <div>
+          {node.children.map(child => (
+            <CategoryTreeItem
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              selectedCategory={selectedCategory}
+              onCategoryChange={onCategoryChange}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Collapsible Section ──────────────────────────────────────────────────────
+
+function Section({
+  title,
   active,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  active?: boolean;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen || active);
+
+  useEffect(() => {
+    if (active) setOpen(true);
+  }, [active]);
+
+  return (
+    <div className="border-b border-slate-100 last:border-none">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center justify-between gap-2 py-3.5 text-left"
+      >
+        <span className="flex items-center gap-2">
+          <span className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-slate-700">{title}</span>
+          {active && (
+            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--catalog-accent)]" />
+          )}
+        </span>
+        <ChevronDown
+          className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && <div className="pb-4 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
+// ── Checkbox row ─────────────────────────────────────────────────────────────
+
+function CheckRow({
+  checked,
   label,
   count,
-  onClick,
+  onChange,
 }: {
-  active: boolean;
+  checked: boolean;
   label: string;
-  count: number;
-  onClick: () => void;
-}) => (
-  <button
-    type="button"
-    onClick={onClick}
-    className={`flex min-h-[4.1rem] flex-col items-start justify-between rounded-2xl border px-3 py-3 text-left transition ${
-      active
-        ? 'border-[color:var(--catalog-accent)]/35 bg-[color:var(--catalog-accent-soft)]/80 text-[color:var(--catalog-accent)] shadow-[0_8px_22px_rgba(20,61,107,0.08)]'
-        : 'border-slate-200 bg-slate-50 text-slate-900 hover:border-slate-300 hover:bg-white'
-    }`}
-  >
-    <span className="text-sm font-medium">{label}</span>
-    <span
-      className={`text-[11px] font-semibold uppercase tracking-[0.18em] ${active ? 'text-[color:var(--catalog-accent)]/80' : 'text-slate-500'}`}
-    >
-      {count}
-    </span>
-  </button>
-);
+  count?: number;
+  onChange: () => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-1 py-1 transition hover:bg-slate-50">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        className="h-4 w-4 rounded border-slate-300 accent-[color:var(--catalog-accent)]"
+      />
+      <span className="flex-1 text-sm text-slate-700">{label}</span>
+      {count !== undefined && (
+        <span className="text-[11px] font-medium text-slate-400">{count}</span>
+      )}
+    </label>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
 
 export function FiltersSidebar({
   products = [],
@@ -134,6 +258,7 @@ export function FiltersSidebar({
   summaryWithImagesCount,
   brandOptions = [],
   rangeOptions = [],
+  variantGroupOptions = [],
   flowOptions = [],
   finishOptions = [],
   priceRange,
@@ -154,11 +279,15 @@ export function FiltersSidebar({
   selectedName,
   onNameChange,
   selectedNumber,
+  selectedNumberOperator,
   onNumberChange,
+  onNumberOperatorChange,
   selectedCollection,
   onCollectionChange,
   selectedRange,
   onRangeChange,
+  selectedVariantGroup,
+  onVariantGroupChange,
   selectedPriceMin,
   onPriceMinChange,
   selectedPriceMax,
@@ -172,562 +301,464 @@ export function FiltersSidebar({
   selectedAttributeQuery,
   onAttributeQueryChange,
   onClearFilters,
+  embedded = false,
 }: FiltersSidebarProps) {
-  const hasBrands = brandOptions.length > 0;
-  const hasRangeOptions = rangeOptions.length > 0;
-  const hasFlowOptions = flowOptions.length > 0;
-  const hasFinishOptions = finishOptions.length > 0;
+  // ── Draft state for text inputs (apply on Enter or button) ────────────────
+  const [draftName, setDraftName] = useState(selectedName);
+  const [draftNumber, setDraftNumber] = useState(selectedNumber);
+  const [draftNumberOp, setDraftNumberOp] = useState<TextMatchOperator>(selectedNumberOperator);
+  const [draftCollection, setDraftCollection] = useState(selectedCollection);
+  const [draftEan, setDraftEan] = useState(selectedEan);
+  const [draftAttr, setDraftAttr] = useState(selectedAttributeQuery);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [showAllCategories, setShowAllCategories] = useState(false);
 
+  useEffect(() => setDraftName(selectedName), [selectedName]);
+  useEffect(() => setDraftNumber(selectedNumber), [selectedNumber]);
+  useEffect(() => setDraftNumberOp(selectedNumberOperator), [selectedNumberOperator]);
+  useEffect(() => setDraftCollection(selectedCollection), [selectedCollection]);
+  useEffect(() => setDraftEan(selectedEan), [selectedEan]);
+  useEffect(() => setDraftAttr(selectedAttributeQuery), [selectedAttributeQuery]);
+
+  const applyDrafts = () => {
+    onNameChange(draftName);
+    onNumberChange(draftNumber);
+    onNumberOperatorChange(draftNumberOp);
+    onCollectionChange(draftCollection);
+    onEanChange(draftEan);
+    onAttributeQueryChange(draftAttr);
+  };
+
+  const draftsDirty =
+    draftName !== selectedName ||
+    draftNumber !== selectedNumber ||
+    draftNumberOp !== selectedNumberOperator ||
+    draftCollection !== selectedCollection ||
+    draftEan !== selectedEan ||
+    draftAttr !== selectedAttributeQuery;
+
+  const handleEnter: KeyboardEventHandler<HTMLInputElement> = e => {
+    if (e.key === 'Enter') { e.preventDefault(); applyDrafts(); }
+  };
+
+  // ── Category logic ────────────────────────────────────────────────────────
   const categories = useMemo(() => flattenTree(categoryTree), [categoryTree]);
-  const categoryMap = useMemo(() => Object.fromEntries(categories.map(item => [item.id, item.path])), [categories]);
-  const selectedCategoryLabel = selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] || selectedCategory);
+  const categoryMap = useMemo(
+    () => Object.fromEntries(categories.map(c => [c.id, c.path])),
+    [categories]
+  );
+  const selectedCategoryLabel =
+    selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] || selectedCategory);
 
   const visibleCategories = useMemo(() => {
     const term = categoryQuery.trim().toLowerCase();
     const source = term
-      ? categories.filter(item => item.label.toLowerCase().includes(term) || item.path.toLowerCase().includes(term))
-      : categories.filter(item => item.count > 0);
-
+      ? categories.filter(c => c.label.toLowerCase().includes(term) || c.path.toLowerCase().includes(term))
+      : categories.filter(c => c.count > 0);
     return [...source]
-      .sort((a, b) => matchScore(b, term) - matchScore(a, term) || b.count - a.count || a.path.localeCompare(b.path, 'es'))
-      .slice(0, term ? 12 : showAllCategories ? 32 : 8);
+      .sort((a, b) => matchScore(b, term) - matchScore(a, term) || b.count - a.count)
+      .slice(0, term ? 12 : showAllCategories ? 40 : 8);
   }, [categoryQuery, categories, showAllCategories]);
 
-  const featuredCategories = useMemo(
-    () =>
-      categories
-        .filter(item => item.count > 0)
-        .sort((a, b) => b.count - a.count || a.path.localeCompare(b.path, 'es'))
-        .slice(0, 6),
-    [categories]
-  );
-
-  const typeLookup = useMemo(() => Object.fromEntries(typeOptions.map(option => [option.id, option])), [typeOptions]);
-  const statusLookup = useMemo(() => Object.fromEntries(statusOptions.map(option => [option.id, option])), [statusOptions]);
+  // ── Price slider ──────────────────────────────────────────────────────────
   const sliderMin = Number.isFinite(priceRange?.min) ? priceRange.min : 0;
   const sliderMax = Number.isFinite(priceRange?.max) ? priceRange.max : 0;
   const hasPriceRange = sliderMax > sliderMin;
-  const selectedPriceMinNumber = selectedPriceMin.trim() ? Number(selectedPriceMin.replace(',', '.')) : sliderMin;
-  const selectedPriceMaxNumber = selectedPriceMax.trim() ? Number(selectedPriceMax.replace(',', '.')) : sliderMax;
-  const safePriceMin = Number.isFinite(selectedPriceMinNumber) ? Math.max(sliderMin, Math.min(selectedPriceMinNumber, selectedPriceMaxNumber || sliderMax)) : sliderMin;
-  const safePriceMax = Number.isFinite(selectedPriceMaxNumber) ? Math.min(sliderMax, Math.max(selectedPriceMaxNumber, selectedPriceMinNumber || sliderMin)) : sliderMax;
-  const sliderRange = Math.max(sliderMax - sliderMin, 1);
-  const leftPercent = ((safePriceMin - sliderMin) / sliderRange) * 100;
-  const rightPercent = ((safePriceMax - sliderMin) / sliderRange) * 100;
-  const activeTrackWidth = Math.max(rightPercent - leftPercent, 0);
+  const safeMin = Number.isFinite(Number(selectedPriceMin)) && selectedPriceMin.trim()
+    ? Math.max(sliderMin, Number(selectedPriceMin)) : sliderMin;
+  const safeMax = Number.isFinite(Number(selectedPriceMax)) && selectedPriceMax.trim()
+    ? Math.min(sliderMax, Number(selectedPriceMax)) : sliderMax;
+  const range = Math.max(sliderMax - sliderMin, 1);
+  const leftPct = ((safeMin - sliderMin) / range) * 100;
+  const rightPct = ((safeMax - sliderMin) / range) * 100;
+
+  // ── Active filter count ───────────────────────────────────────────────────
   const activeFilterCount = [
-    selectedName.trim(),
-    selectedNumber.trim(),
-    selectedCollection.trim(),
-    selectedRange.trim(),
-    selectedPriceMin.trim(),
-    selectedPriceMax.trim(),
-    selectedEan.trim(),
-    selectedFlow.trim(),
-    selectedFinish.trim(),
-    selectedAttributeQuery.trim(),
-    selectedBrand !== 'all',
-    selectedCategory !== 'all',
-    selectedType !== 'all',
-    selectedStatus !== 'all',
-    selectedMediaFilter !== 'all',
-    selectedQuickFilter !== 'all',
+    selectedName.trim(), selectedNumber.trim(), selectedCollection.trim(),
+    selectedRange.trim(), selectedVariantGroup.trim(), selectedPriceMin.trim(),
+    selectedPriceMax.trim(), selectedEan.trim(), selectedFlow.trim(),
+    selectedFinish.trim(), selectedAttributeQuery.trim(),
+    selectedBrand !== 'all', selectedCategory !== 'all',
+    selectedType !== 'all', selectedStatus !== 'all',
+    selectedMediaFilter !== 'all', selectedQuickFilter !== 'all',
   ].filter(Boolean).length;
 
+  // ── Content availability helpers ─────────────────────────────────────────
+  const contentFilters: { value: MediaFilter; label: string }[] = [
+    { value: 'with-assets', label: 'Con imagen' },
+    { value: 'without-assets', label: 'Sin imagen' },
+    { value: 'documents-only', label: 'Solo documentos' },
+    { value: 'images-only', label: 'Solo imágenes' },
+    { value: 'mixed', label: 'Imágenes y documentos' },
+  ];
+
+  const wrapper = embedded
+    ? 'min-w-0'
+    : 'sticky top-24 overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.07)]';
+
   return (
-    <div className="sticky top-24 overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.06)]">
-      <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-700">Filtros</h2>
-            {activeFilterCount > 0 ? (
-              <span className="rounded-full bg-[color:var(--catalog-accent-soft)] px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)]">
-                {activeFilterCount} activos
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Acota por nombre, número, tipo, estado y más.</p>
+    <div className={wrapper}>
+      {/* ── Header ── */}
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-sm font-semibold text-slate-800">Filtros</h2>
+          {activeFilterCount > 0 && (
+            <span className="rounded-full bg-[color:var(--catalog-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[color:var(--catalog-accent)]">
+              {activeFilterCount}
+            </span>
+          )}
         </div>
         <button
+          type="button"
           onClick={onClearFilters}
-          className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-600 transition hover:bg-slate-100"
+          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
         >
           Limpiar
         </button>
       </div>
 
-      <div className="space-y-5 p-5">
-        <section className="space-y-3">
-          <div className="space-y-2">
-            <label htmlFor="name-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Nombre
-            </label>
-            <input
-              id="name-filter"
-              type="text"
-              value={selectedName}
-              onChange={event => onNameChange(event.target.value)}
-              placeholder="Filtrar por nombre..."
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-            />
-          </div>
+      {/* ── Summary ── */}
+      <div className="border-b border-slate-100 px-5 py-3">
+        <p className="text-xs text-slate-500">
+          <span className="font-semibold text-slate-700">{summaryProductsCount ?? products.length}</span> productos
+          {' · '}
+          <span className="font-semibold text-slate-700">
+            {summaryWithImagesCount ?? products.filter(p => (p.images?.length || 0) > 0).length}
+          </span>{' '}
+          con imagen
+        </p>
+      </div>
 
-          <div className="space-y-2">
-            <label htmlFor="number-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              SKU
-            </label>
-            <input
-              id="number-filter"
-              type="text"
-              value={selectedNumber}
-              onChange={event => onNumberChange(event.target.value)}
-              placeholder="Filtrar por SKU..."
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-            />
-          </div>
+      {/* ── Sections ── */}
+      <div className="divide-y divide-slate-100 px-5">
 
-          <div className="space-y-2">
-            <label htmlFor="collection-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Colección
-            </label>
-            <input
-              id="collection-filter"
-              type="text"
-              value={selectedCollection}
-              onChange={event => onCollectionChange(event.target.value)}
-              placeholder="Filtrar por colección..."
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="range-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Gama
-            </label>
-            <select
-              id="range-filter"
-              value={selectedRange}
-              onChange={event => onRangeChange(event.target.value)}
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              disabled={!hasRangeOptions}
-            >
-              <option value="">{hasRangeOptions ? 'Todas las gamas' : 'Sin gamas disponibles'}</option>
-              {rangeOptions.map(option => (
-                <option key={option.id} value={option.id}>
-                  {option.label} ({option.count})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Rango de precio
-            </label>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-4">
-              <div className="mb-4 flex items-center justify-between gap-3 text-sm font-semibold text-slate-700">
-                <div className="rounded-full bg-white px-3 py-1.5 shadow-sm">
-                  Desde {formatPriceValue(safePriceMin)} €
-                </div>
-                <div className="rounded-full bg-white px-3 py-1.5 shadow-sm">
-                  Hasta {formatPriceValue(safePriceMax)} €
-                </div>
-              </div>
-
-              {hasPriceRange ? (
-                <div className="relative py-4">
-                  <div className="absolute left-0 right-0 top-1/2 h-2 -translate-y-1/2 rounded-full bg-slate-200" />
-                  <div
-                    className="absolute top-1/2 h-2 -translate-y-1/2 rounded-full bg-[color:var(--catalog-accent)]"
-                    style={{ left: `${leftPercent}%`, width: `${activeTrackWidth}%` }}
-                  />
-                  <input
-                    type="range"
-                    min={sliderMin}
-                    max={sliderMax}
-                    step={1}
-                    value={safePriceMin}
-                    onChange={event => {
-                      const nextValue = Math.min(Number(event.target.value), safePriceMax);
-                      onPriceMinChange(String(nextValue));
-                    }}
-                    className="pointer-events-none absolute left-0 top-1/2 h-2 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)] [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-[color:var(--catalog-accent)] [&::-moz-range-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)]"
-                    aria-label="Precio mínimo"
-                  />
-                  <input
-                    type="range"
-                    min={sliderMin}
-                    max={sliderMax}
-                    step={1}
-                    value={safePriceMax}
-                    onChange={event => {
-                      const nextValue = Math.max(Number(event.target.value), safePriceMin);
-                      onPriceMaxChange(String(nextValue));
-                    }}
-                    className="pointer-events-none absolute left-0 top-1/2 h-2 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-6px] [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)] [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-[color:var(--catalog-accent)] [&::-moz-range-thumb]:shadow-[0_8px_18px_rgba(20,61,107,0.28)]"
-                    aria-label="Precio máximo"
-                  />
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-5 text-sm text-slate-500">
-                  No hay suficientes precios para construir el rango.
-                </div>
-              )}
-
-              <div className="mt-2 flex items-center justify-between text-xs font-medium text-slate-500">
-                <span>{formatPriceValue(sliderMin)} €</span>
-                <span>{formatPriceValue(sliderMax)} €</span>
+        {/* Búsqueda rápida */}
+        <Section
+          title="Búsqueda rápida"
+          defaultOpen
+          active={!!(selectedName || selectedNumber || selectedEan)}
+        >
+          <div className="space-y-3">
+            <div>
+              <SectionLabel>Nombre</SectionLabel>
+              <div className="mt-1.5">
+                <FilterInput
+                  type="text"
+                  value={draftName}
+                  onChange={e => setDraftName(e.target.value)}
+                  onKeyDown={handleEnter}
+                  placeholder="Filtrar por nombre..."
+                />
               </div>
             </div>
 
-            <div className="hidden grid-cols-2 gap-2">
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={selectedPriceMin}
-                onChange={event => onPriceMinChange(event.target.value)}
-                placeholder="Desde €"
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              />
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={selectedPriceMax}
-                onChange={event => onPriceMaxChange(event.target.value)}
-                placeholder="Hasta €"
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              />
+            <div>
+              <SectionLabel>SKU</SectionLabel>
+              <div className="mt-1.5 flex gap-2">
+                <select
+                  value={draftNumberOp}
+                  onChange={e => setDraftNumberOp(e.target.value as TextMatchOperator)}
+                  className="h-10 w-32 shrink-0 rounded-xl border border-slate-200 bg-white px-2.5 text-xs text-slate-700 outline-none focus:border-[color:var(--catalog-accent)]"
+                >
+                  <option value="contains">Contains</option>
+                  <option value="is">Is</option>
+                  <option value="starts_with">Starts with</option>
+                  <option value="is_not">Is not</option>
+                </select>
+                <FilterInput
+                  type="text"
+                  value={draftNumber}
+                  onChange={e => setDraftNumber(e.target.value)}
+                  onKeyDown={handleEnter}
+                  placeholder="SKU..."
+                />
+              </div>
             </div>
-          </div>
 
-          <div className="space-y-2">
-            <label htmlFor="ean-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              EAN
-            </label>
-            <input
-              id="ean-filter"
-              type="text"
-              value={selectedEan}
-              onChange={event => onEanChange(event.target.value)}
-              placeholder="Filtrar por EAN..."
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-            />
-          </div>
+            <div>
+              <SectionLabel>EAN</SectionLabel>
+              <div className="mt-1.5">
+                <FilterInput
+                  type="text"
+                  value={draftEan}
+                  onChange={e => setDraftEan(e.target.value)}
+                  onKeyDown={handleEnter}
+                  placeholder="EAN..."
+                />
+              </div>
+            </div>
 
-          <div className="space-y-2">
-            <label htmlFor="flow-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Caudal
-            </label>
-            <select
-              id="flow-filter"
-              value={selectedFlow}
-              onChange={event => onFlowChange(event.target.value)}
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              disabled={!hasFlowOptions}
-            >
-              <option value="">{hasFlowOptions ? 'Todos los caudales' : 'Sin caudales disponibles'}</option>
-              {flowOptions.map(option => (
-                <option key={option.id} value={option.id}>
-                  {option.label} ({option.count})
-                </option>
-              ))}
-            </select>
+            {draftsDirty && (
+              <button
+                type="button"
+                onClick={applyDrafts}
+                className="h-9 w-full rounded-lg bg-[color:var(--catalog-accent)] text-xs font-semibold text-white transition hover:opacity-90"
+              >
+                Aplicar búsqueda
+              </button>
+            )}
           </div>
+        </Section>
 
-          <div className="space-y-2">
-            <label htmlFor="finish-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Acabado
-            </label>
-            <select
-              id="finish-filter"
-              value={selectedFinish}
-              onChange={event => onFinishChange(event.target.value)}
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              disabled={!hasFinishOptions}
-            >
-              <option value="">{hasFinishOptions ? 'Todos los acabados' : 'Sin acabados disponibles'}</option>
-              {finishOptions.map(option => (
-                <option key={option.id} value={option.id}>
-                  {option.label} ({option.count})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="space-y-2">
-            <label htmlFor="attribute-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Atributo
-            </label>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                id="attribute-filter"
-                type="text"
-                value={selectedAttributeQuery}
-                onChange={event => onAttributeQueryChange(event.target.value)}
-                placeholder="Buscar por atributo o valor completo..."
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              />
-              {selectedAttributeQuery ? (
+        {/* Categorías */}
+        <Section title="Categorías" active={selectedCategory !== 'all'} defaultOpen>
+          <div className="space-y-1">
+            {selectedCategoryLabel && (
+              <div className="mb-2 flex items-center justify-between rounded-lg bg-[color:var(--catalog-accent-soft)]/60 px-3 py-2">
+                <span className="truncate text-xs font-medium text-[color:var(--catalog-accent)]">
+                  {selectedCategoryLabel}
+                </span>
                 <button
                   type="button"
-                  onClick={() => onAttributeQueryChange('')}
-                  className="absolute right-3 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                  aria-label="Limpiar búsqueda de atributos"
+                  onClick={() => onCategoryChange('all')}
+                  className="ml-2 shrink-0 text-[color:var(--catalog-accent)] opacity-70 hover:opacity-100"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
-              ) : null}
-            </div>
-          </div>
-        </section>
+              </div>
+            )}
 
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
+            {categoryTree.length > 0 ? (
+              categoryTree.map(node => (
+                <CategoryTreeItem
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  selectedCategory={selectedCategory}
+                  onCategoryChange={onCategoryChange}
+                />
+              ))
+            ) : (
+              <p className="px-1 text-xs text-slate-400">No hay categorías disponibles</p>
+            )}
+          </div>
+        </Section>
+
+        {/* Comercial */}
+        <Section
+          title="Comercial"
+          active={!!(selectedCollection || selectedRange || selectedVariantGroup || selectedFlow || selectedFinish || selectedPriceMin || selectedPriceMax)}
+        >
+          <div className="space-y-4">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Categorías</p>
-              <p className="mt-1 text-xs text-slate-500">Busca por nombre o ruta.</p>
+              <SectionLabel>Colección</SectionLabel>
+              <div className="mt-1.5">
+                <FilterInput
+                  type="text"
+                  value={draftCollection}
+                  onChange={e => setDraftCollection(e.target.value)}
+                  onKeyDown={handleEnter}
+                  placeholder="Filtrar por colección..."
+                />
+              </div>
             </div>
-            {selectedCategoryLabel ? (
-              <button
-                type="button"
-                onClick={() => onCategoryChange('all')}
-                className="max-w-[11rem] truncate rounded-full bg-[color:var(--catalog-accent-soft)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[color:var(--catalog-accent)]"
-                title={selectedCategoryLabel}
-              >
-                {selectedCategoryLabel}
-              </button>
-            ) : null}
-          </div>
 
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={categoryQuery}
-              onChange={event => setCategoryQuery(event.target.value)}
-              placeholder="Buscar categoría..."
-              className="h-11 w-full rounded-2xl border border-slate-200 bg-white pl-10 pr-9 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-            />
-            {categoryQuery ? (
-              <button
-                type="button"
-                onClick={() => setCategoryQuery('')}
-                className="absolute right-3 top-1/2 inline-flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                aria-label="Limpiar búsqueda de categorías"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-
-          {!categoryQuery.trim() && !showAllCategories ? (
-            <div className="grid grid-cols-2 gap-2">
-              {featuredCategories.map(item => {
-                const active = selectedCategory === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    title={item.label}
-                    onClick={() => onCategoryChange(item.id)}
-                    className={`rounded-2xl border px-3 py-3 text-left transition ${
-                      active
-                        ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
-                        : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className={`min-w-0 break-words text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
-                        {item.label}
-                      </span>
-                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                        {item.count}
-                      </span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-
-          {showAllCategories || categoryQuery.trim() ? (
-            <div className="space-y-2">
-              {visibleCategories.length > 0 ? (
-                visibleCategories.map(item => {
-                  const active = selectedCategory === item.id;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => onCategoryChange(item.id)}
-                      className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                        active
-                          ? 'border-[color:var(--catalog-accent)]/30 bg-[color:var(--catalog-accent-soft)]/80'
-                          : 'border-slate-200 bg-slate-50 hover:bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className={`truncate text-sm font-medium ${active ? 'text-[color:var(--catalog-accent)]' : 'text-slate-900'}`}>
-                            {item.label}
-                          </p>
-                          <p className="mt-1 truncate text-xs text-slate-500">{item.path}</p>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                          {item.count}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-                  No hay categorías que coincidan con esa búsqueda.
+            {rangeOptions.length > 0 && (
+              <div>
+                <SectionLabel>Gama</SectionLabel>
+                <div className="mt-1.5">
+                  <FilterSelect value={selectedRange} onChange={e => onRangeChange(e.target.value)}>
+                    <option value="">Todas las gamas</option>
+                    {rangeOptions.map(o => (
+                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    ))}
+                  </FilterSelect>
                 </div>
+              </div>
+            )}
+
+            {finishOptions.length > 0 && (
+              <div>
+                <SectionLabel>Acabado</SectionLabel>
+                <div className="mt-2 space-y-0.5 max-h-48 overflow-y-auto">
+                  {finishOptions.map(o => (
+                    <CheckRow
+                      key={o.id}
+                      checked={selectedFinish === o.id}
+                      label={o.label}
+                      count={o.count}
+                      onChange={() => onFinishChange(selectedFinish === o.id ? '' : o.id)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {flowOptions.length > 0 && (
+              <div>
+                <SectionLabel>Caudal</SectionLabel>
+                <div className="mt-1.5">
+                  <FilterSelect value={selectedFlow} onChange={e => onFlowChange(e.target.value)}>
+                    <option value="">Todos los caudales</option>
+                    {flowOptions.map(o => (
+                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+              </div>
+            )}
+
+            {variantGroupOptions.length > 0 && (
+              <div>
+                <SectionLabel>Variant group</SectionLabel>
+                <div className="mt-1.5">
+                  <FilterSelect value={selectedVariantGroup} onChange={e => onVariantGroupChange(e.target.value)}>
+                    <option value="">Todos</option>
+                    {variantGroupOptions.map(o => (
+                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    ))}
+                  </FilterSelect>
+                </div>
+              </div>
+            )}
+
+            {hasPriceRange && (
+              <div>
+                <SectionLabel>Precio</SectionLabel>
+                <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3.5">
+                  <div className="mb-3 flex items-center justify-between text-xs font-semibold text-slate-600">
+                    <span>{formatPrice(safeMin)} €</span>
+                    <span>{formatPrice(safeMax)} €</span>
+                  </div>
+                  <div className="relative h-5">
+                    <div className="absolute top-1/2 left-0 right-0 h-1.5 -translate-y-1/2 rounded-full bg-slate-200" />
+                    <div
+                      className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[color:var(--catalog-accent)]"
+                      style={{ left: `${leftPct}%`, width: `${Math.max(rightPct - leftPct, 0)}%` }}
+                    />
+                    <input type="range" min={sliderMin} max={sliderMax} step={1} value={safeMin}
+                      onChange={e => onPriceMinChange(String(Math.min(Number(e.target.value), safeMax)))}
+                      className="pointer-events-none absolute left-0 top-1/2 h-1.5 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-md"
+                      aria-label="Precio mínimo"
+                    />
+                    <input type="range" min={sliderMin} max={sliderMax} step={1} value={safeMax}
+                      onChange={e => onPriceMaxChange(String(Math.max(Number(e.target.value), safeMin)))}
+                      className="pointer-events-none absolute left-0 top-1/2 h-1.5 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-md"
+                      aria-label="Precio máximo"
+                    />
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-[10px] text-slate-400">
+                    <span>{formatPrice(sliderMin)} €</span>
+                    <span>{formatPrice(sliderMax)} €</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {draftsDirty && (
+              <button
+                type="button"
+                onClick={applyDrafts}
+                className="h-9 w-full rounded-lg bg-[color:var(--catalog-accent)] text-xs font-semibold text-white transition hover:opacity-90"
+              >
+                Aplicar
+              </button>
+            )}
+          </div>
+        </Section>
+
+        {/* Tipo de producto */}
+        <Section title="Tipo de producto" active={selectedType !== 'all'}>
+          <div className="space-y-0.5">
+            {[{ id: 'single', label: 'Simple' }, { id: 'variant', label: 'Con acabados' }, { id: 'bundle', label: 'Bundle' }].map(tile => {
+              const opt = typeOptions.find(o => o.id === tile.id);
+              return (
+                <CheckRow
+                  key={tile.id}
+                  checked={selectedType === tile.id}
+                  label={tile.label}
+                  count={opt?.count}
+                  onChange={() => onTypeChange(selectedType === tile.id ? 'all' : tile.id)}
+                />
+              );
+            })}
+          </div>
+        </Section>
+
+        {/* Contenido disponible */}
+        <Section title="Contenido disponible" active={selectedMediaFilter !== 'all'}>
+          <div className="space-y-0.5">
+            {contentFilters.map(f => (
+              <CheckRow
+                key={f.value}
+                checked={selectedMediaFilter === f.value}
+                label={f.label}
+                onChange={() => onMediaFilterChange(selectedMediaFilter === f.value ? 'all' : f.value)}
+              />
+            ))}
+          </div>
+        </Section>
+
+        {/* Estado editorial */}
+        <Section title="Estado editorial" active={selectedStatus !== 'all'}>
+          <div className="space-y-0.5">
+            {[
+              { id: 'draft', label: 'Borrador' },
+              { id: 'to-be-published', label: 'Por publicar' },
+              { id: 'published', label: 'Publicado' },
+              { id: 'archived', label: 'Archivado' },
+            ].map(tile => {
+              const opt = statusOptions.find(o => o.id === tile.id);
+              return (
+                <CheckRow
+                  key={tile.id}
+                  checked={selectedStatus === tile.id}
+                  label={tile.label}
+                  count={opt?.count}
+                  onChange={() => onStatusChange(selectedStatus === tile.id ? 'all' : tile.id)}
+                />
+              );
+            })}
+          </div>
+        </Section>
+
+        {/* Atributos técnicos */}
+        <Section title="Atributos técnicos" active={!!selectedAttributeQuery}>
+          <div>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+              <FilterInput
+                type="text"
+                value={draftAttr}
+                onChange={e => setDraftAttr(e.target.value)}
+                onKeyDown={handleEnter}
+                placeholder="Buscar atributo o valor..."
+                className="pl-9 pr-8"
+              />
+              {draftAttr && (
+                <button
+                  type="button"
+                  onClick={() => { setDraftAttr(''); onAttributeQueryChange(''); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
               )}
             </div>
-          ) : null}
-
-          {!categoryQuery.trim() ? (
-            <button
-              type="button"
-              onClick={() => setShowAllCategories(previous => !previous)}
-              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
-            >
-              {showAllCategories ? 'Mostrar menos' : `Ver todas las categorías (${categories.length})`}
-            </button>
-          ) : null}
-        </section>
-
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Tipo de producto</p>
-              <p className="mt-1 text-xs text-slate-500">Selecciona un tipo de producto.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onTypeChange('all')}
-              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
-            >
-              Restablecer
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            {TYPE_TILES.map(tile => {
-              const option = typeLookup[tile.id];
-              const count = option?.count || 0;
-              const active = selectedType === tile.id;
-              return (
-                <FilterTile
-                  key={tile.id}
-                  active={active}
-                  label={tile.label}
-                  count={count}
-                  onClick={() => onTypeChange(active ? 'all' : tile.id)}
-                />
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Estado</p>
-              <p className="mt-1 text-xs text-slate-500">Filtra por estado editorial.</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onStatusChange('all')}
-              className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[color:var(--catalog-accent)] transition hover:opacity-80"
-            >
-              Restablecer
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            {STATUS_TILES.map(tile => {
-              const option = statusLookup[tile.id];
-              const count = option?.count || 0;
-              const active = selectedStatus === tile.id;
-              return (
-                <FilterTile
-                  key={tile.id}
-                  active={active}
-                  label={tile.label}
-                  count={count}
-                  onClick={() => onStatusChange(active ? 'all' : tile.id)}
-                />
-              );
-            })}
-          </div>
-        </section>
-
-        <details className="group rounded-3xl border border-slate-200 bg-slate-50/60 px-4 py-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.22em] text-slate-700">
-            <span>Más filtros</span>
-            <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" />
-          </summary>
-
-          <div className="mt-4 space-y-5">
-            <div className="space-y-2">
-              <label htmlFor="brand-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                Marca
-              </label>
-              <select
-                id="brand-filter"
-                value={selectedBrand}
-                onChange={event => onBrandChange(event.target.value)}
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60 disabled:cursor-not-allowed disabled:bg-slate-100"
-                disabled={!hasBrands}
+            {draftAttr !== selectedAttributeQuery && draftAttr.trim() && (
+              <button
+                type="button"
+                onClick={applyDrafts}
+                className="mt-2 h-9 w-full rounded-lg bg-[color:var(--catalog-accent)] text-xs font-semibold text-white transition hover:opacity-90"
               >
-                <option value="all">{hasBrands ? 'Todas las marcas' : 'Sin marcas en el feed'}</option>
-                {brandOptions.map(brand => (
-                  <option key={brand.id} value={brand.id}>
-                    {brand.label} ({brand.count})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <label htmlFor="media-filter" className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
-                Archivos y medios
-              </label>
-              <select
-                id="media-filter"
-                value={selectedMediaFilter}
-                onChange={event => onMediaFilterChange(event.target.value as MediaFilter)}
-                className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]/60"
-              >
-                <option value="all">Todos</option>
-                <option value="with-assets">Con archivos</option>
-                <option value="without-assets">Sin archivos</option>
-                <option value="images-only">Solo imágenes</option>
-                <option value="documents-only">Solo documentos</option>
-                <option value="mixed">Imágenes y documentos</option>
-              </select>
-            </div>
+                Buscar
+              </button>
+            )}
           </div>
-        </details>
+        </Section>
 
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Resumen</p>
-          <p className="mt-2 text-sm text-slate-700">
-            {summaryProductsCount ?? products.length} productos cargados
-            {' · '}
-            {summaryWithImagesCount ?? products.filter(product => (product.images?.length || 0) > 0).length} con imágenes
-          </p>
-        </div>
+        {/* Marca */}
+        {brandOptions.length > 0 && (
+          <Section title="Marca" active={selectedBrand !== 'all'}>
+            <FilterSelect value={selectedBrand} onChange={e => onBrandChange(e.target.value)}>
+              <option value="all">Todas las marcas</option>
+              {brandOptions.map(b => (
+                <option key={b.id} value={b.id}>{b.label} ({b.count})</option>
+              ))}
+            </FilterSelect>
+          </Section>
+        )}
+
       </div>
     </div>
   );

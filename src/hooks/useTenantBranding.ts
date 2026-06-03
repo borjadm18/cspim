@@ -10,6 +10,8 @@ type TenantBranding = {
   primaryText: string;
 };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const hexToRgb = (hex: string) => {
   const normalized = hex.replace('#', '').trim();
   if (![3, 6].includes(normalized.length)) return null;
@@ -51,10 +53,11 @@ export function useTenantBranding(tenantId: string | undefined) {
       let data: { name: string; primary_color: string; primary_hover: string; primary_text: string; logo_url: string | null } | null = null;
 
       try {
+        const tenantColumn = UUID_PATTERN.test(tenantId) ? 'id' : 'slug';
         const result = await supabase
           .from('tenants')
           .select('name, primary_color, primary_hover, primary_text, logo_url')
-          .eq('id', tenantId)
+          .eq(tenantColumn, tenantId)
           .single();
 
         if (result.error) throw result.error;

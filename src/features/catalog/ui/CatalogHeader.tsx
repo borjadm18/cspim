@@ -1,6 +1,7 @@
-import { ChevronDown, LogOut, Search, Settings2, X } from 'lucide-react';
+import { ChevronDown, Search, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { CatalogAccessMode, TenantOption } from '../model/catalogTypes';
+import { UserMenu } from './UserMenu';
 
 interface CatalogHeaderProps {
   searchTerm: string;
@@ -18,6 +19,10 @@ interface CatalogHeaderProps {
   accessMode: CatalogAccessMode;
   onTenantChange: (tenantId: string) => void;
   sortControl?: ReactNode;
+  controlsRow?: ReactNode;
+  userEmail?: string | null;
+  userFullName?: string | null;
+  onOpenProfile: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
 }
@@ -38,6 +43,10 @@ export function CatalogHeader({
   accessMode,
   onTenantChange,
   sortControl,
+  controlsRow,
+  userEmail,
+  userFullName,
+  onOpenProfile,
   onOpenSettings,
   onSignOut,
 }: CatalogHeaderProps) {
@@ -47,23 +56,21 @@ export function CatalogHeader({
   const [logoError, setLogoError] = useState(false);
   const skipDebounceRef = useRef(false);
 
-  // Sync external changes (vistas guardadas, limpiar desde el padre)
   useEffect(() => {
     skipDebounceRef.current = true;
     setInputValue(searchTerm);
   }, [searchTerm]);
 
-  // Debounce: propagar al padre tras 250 ms de inactividad
   useEffect(() => {
     if (skipDebounceRef.current) {
       skipDebounceRef.current = false;
       return;
     }
+
     const timer = setTimeout(() => onSearchTermChange(inputValue), 250);
     return () => clearTimeout(timer);
   }, [inputValue, onSearchTermChange]);
 
-  // Resetear error de logo cuando cambia la URL
   useEffect(() => {
     setLogoError(false);
   }, [logoUrl]);
@@ -82,10 +89,10 @@ export function CatalogHeader({
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/90 backdrop-blur-xl">
-        <div className="flex w-full flex-wrap items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-[20px] border border-slate-200 bg-white shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
+      <div className="mb-5 rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-4 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur lg:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-[0_8px_20px_rgba(15,23,42,0.06)]">
               {logoUrl && !logoError ? (
                 <img
                   src={logoUrl}
@@ -94,117 +101,102 @@ export function CatalogHeader({
                   onError={() => setLogoError(true)}
                 />
               ) : (
-                <span className="flex h-full w-full items-center justify-center rounded-[20px] bg-[var(--catalog-accent)] text-sm font-semibold tracking-[0.24em] text-white">
+                <span className="flex h-full w-full items-center justify-center rounded-[18px] bg-[var(--catalog-accent)] text-sm font-semibold tracking-[0.24em] text-white">
                   CS
                 </span>
               )}
             </div>
 
-            <div className="h-10 w-px bg-slate-200" />
-
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-500">Content Store</p>
-              <h1 className="mt-1 text-xl font-semibold tracking-[-0.03em] text-slate-900">Catálogo virtual</h1>
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Content Store</p>
+              <p className="truncate text-lg font-semibold tracking-[-0.03em] text-slate-900">Catálogo virtual</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            {accessMode === 'admin' ? (
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => setTenantMenuOpen(open => !open)}
-                  className="inline-flex items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Organización</span>
-                    <span className="mt-0.5 text-sm font-semibold text-slate-900">{selectedTenant?.label || 'Sin organización'}</span>
-                  </div>
-                  <ChevronDown className="h-4 w-4 text-slate-400" />
-                </button>
-
-                {tenantMenuOpen && (
-                  <>
-                    <button
-                      type="button"
-                      className="fixed inset-0 z-40 cursor-default"
-                      aria-label="Cerrar selector de organización"
-                      onClick={() => setTenantMenuOpen(false)}
-                    />
-                    <div className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-[380px] rounded-3xl border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
-                      <input
-                        type="text"
-                        value={tenantSearch}
-                        onChange={event => setTenantSearch(event.target.value)}
-                        placeholder="Buscar organización..."
-                        className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none focus:border-[color:var(--catalog-accent)]"
-                      />
-                      <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
-                        {filteredTenantOptions.map(option => {
-                          const active = option.id === selectedTenantId;
-                          return (
-                            <button
-                              key={option.id}
-                              type="button"
-                              onClick={() => {
-                                onTenantChange(option.id);
-                                setTenantMenuOpen(false);
-                                setTenantSearch('');
-                              }}
-                              className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
-                                active
-                                  ? 'border-[color:var(--catalog-accent)] bg-[color:var(--catalog-accent-soft)]'
-                                  : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-                              }`}
-                            >
-                              <p className="text-sm font-semibold text-slate-900">{option.label}</p>
-                              <p className="mt-1 text-xs text-slate-500">{option.description || option.id}</p>
-                            </button>
-                          );
-                        })}
-                        {filteredTenantOptions.length === 0 && (
-                          <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">
-                            No hay organizaciones que coincidan.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Organización</p>
-                <p className="mt-0.5 text-sm font-semibold text-slate-900">{selectedTenant?.label || 'Organización activa'}</p>
-              </div>
-            )}
-
-            {activeViewName ? (
-              <span className="hidden rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--catalog-accent)] md:inline">
-                Vista: {activeViewName}
-              </span>
-            ) : null}
-            <span className="hidden text-sm text-slate-500 md:inline">admin@demo.com</span>
-            <button
-              onClick={onOpenSettings}
-              className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
-            >
-              <Settings2 className="h-4 w-4" />
-              Configuración
-            </button>
-            <button
-              type="button"
-              onClick={onSignOut}
-              className="inline-flex items-center gap-2 rounded-full bg-[#d90429] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[#b70322]"
-            >
-              <LogOut className="h-4 w-4" />
-              Salir
-            </button>
-          </div>
+          <UserMenu
+            email={userEmail}
+            fullName={userFullName}
+            onOpenProfile={onOpenProfile}
+            onOpenSettings={onOpenSettings}
+            onLogout={onSignOut}
+            showLabel={false}
+            buttonClassName="px-3 py-2"
+          />
         </div>
-      </header>
 
-      <section className="mb-6 rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-5 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur">
+        <div className="mt-4">
+          {accessMode === 'admin' ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setTenantMenuOpen(open => !open)}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Organización</p>
+                  <p className="mt-1 truncate text-sm font-semibold text-slate-900">
+                    {selectedTenant?.label || 'Sin organización'}
+                  </p>
+                </div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
+              </button>
+
+              {tenantMenuOpen ? (
+                <>
+                  <button
+                    type="button"
+                    className="fixed inset-0 z-40 cursor-default"
+                    aria-label="Cerrar selector de organización"
+                    onClick={() => setTenantMenuOpen(false)}
+                  />
+                  <div className="absolute left-0 top-[calc(100%+0.5rem)] z-50 w-full rounded-3xl border border-slate-200 bg-white p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)]">
+                    <input
+                      type="text"
+                      value={tenantSearch}
+                      onChange={event => setTenantSearch(event.target.value)}
+                      placeholder="Buscar organización..."
+                      className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-900 outline-none focus:border-[color:var(--catalog-accent)]"
+                    />
+                    <div className="mt-3 max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {filteredTenantOptions.map(option => {
+                        const active = option.id === selectedTenantId;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => {
+                              onTenantChange(option.id);
+                              setTenantMenuOpen(false);
+                              setTenantSearch('');
+                            }}
+                            className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                              active
+                                ? 'border-[color:var(--catalog-accent)] bg-[color:var(--catalog-accent-soft)]'
+                                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                            }`}
+                          >
+                            <p className="text-sm font-semibold text-slate-900">{option.label}</p>
+                            <p className="mt-1 text-xs text-slate-500">{option.description || option.id}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Organización</p>
+              <p className="mt-1 truncate text-sm font-semibold text-slate-900">
+                {selectedTenant?.label || 'Organización activa'}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <section className="mb-6 rounded-[28px] border border-slate-200/80 bg-white/90 px-5 py-5 shadow-[0_16px_36px_rgba(15,23,42,0.06)] backdrop-blur lg:sticky lg:top-4 lg:z-30">
         <div className="grid gap-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
             <div className="relative flex-1">
@@ -238,7 +230,9 @@ export function CatalogHeader({
             {sortControl ? <div className="shrink-0">{sortControl}</div> : null}
           </div>
 
-          {recentSearches.length > 0 && (
+          {controlsRow ? <div className="flex flex-wrap items-center justify-between gap-3">{controlsRow}</div> : null}
+
+          {recentSearches.length > 0 ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Recientes</span>
               {recentSearches.map(term => (
@@ -246,7 +240,7 @@ export function CatalogHeader({
                   key={term}
                   type="button"
                   onClick={() => onRecentSearchSelect(term)}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-white"
+                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-white"
                 >
                   {term}
                   <X className="h-3 w-3" />
@@ -260,13 +254,19 @@ export function CatalogHeader({
                 Limpiar recientes
               </button>
             </div>
-          )}
+          ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-600">
               Mostrando <span className="font-semibold text-slate-900">{filteredCount}</span> grupos de{' '}
               <span className="font-semibold text-slate-900">{productsCount}</span> productos
             </p>
+
+            {activeViewName ? (
+              <span className="rounded-full border border-[color:var(--catalog-accent-soft)] bg-[color:var(--catalog-accent-soft)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--catalog-accent)] lg:hidden">
+                Vista: {activeViewName}
+              </span>
+            ) : null}
           </div>
         </div>
       </section>

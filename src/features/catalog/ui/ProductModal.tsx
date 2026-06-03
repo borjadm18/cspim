@@ -480,16 +480,6 @@ export function ProductModal({
                   <Eye className="h-4 w-4" />
                   Ver imagen principal
                 </button>
-                <button type="button" onClick={exportPayload} disabled={isExporting} className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60">
-                  <Download className="h-4 w-4" />
-                  {isExporting ? 'Exportando...' : 'Exportar'}
-                </button>
-                {canSave ? (
-                  <button type="button" onClick={handleSave} className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-medium text-white transition ${saveState === 'saved' ? 'bg-green-800 hover:bg-green-700' : 'bg-slate-800 hover:bg-slate-700'}`}>
-                    <Check className="h-4 w-4" />
-                    {saveState === 'saved' ? 'Guardado' : 'Guardar'}
-                  </button>
-                ) : null}
               </div>
             </div>
           </div>

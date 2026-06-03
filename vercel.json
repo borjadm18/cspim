@@ -18,9 +18,21 @@
   ],
   "headers": [
     {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
       "source": "/api/catalog",
       "headers": [
         { "key": "Cache-Control", "value": "s-maxage=1800, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/(.*\\.png|.*\\.svg|.*\\.ico|.*\\.webp|.*\\.jpg|.*\\.jpeg)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, must-revalidate" }
       ]
     },
     {

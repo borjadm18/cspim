@@ -23,6 +23,7 @@ export type CategoryTreeNode = { id: string; label: string; count: number; child
 export type StatusOption = { id: string; label: string; count: number };
 export type TypeOption = { id: string; label: string; count: number };
 export type FacetOption = { id: string; label: string; count: number };
+export type TextMatchOperator = 'contains' | 'is' | 'starts_with' | 'is_not';
 
 export const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
@@ -67,6 +68,56 @@ const parseNumberish = (value: unknown) => {
   if (!text) return null;
   const parsed = Number.parseFloat(text[0]);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getBaseReference = (product: Product) => {
+  const explicit = cleanText((product as AnyRecord).baseReference).trim();
+  if (explicit) return explicit;
+
+  const attributes = Array.isArray(product.attributes)
+    ? product.attributes
+    : Object.entries(toAttributeRecord(product.attributes)).map(([name, value]) => ({ name, value }));
+
+  const attributeMatch = attributes.find((attribute: ProductAttribute & { definitionName?: string; name?: string; label?: string }) => {
+    const key = normalizeKey(attribute.definitionName || attribute.name || attribute.label || '');
+    return key.includes('referencia base acabado') || key === 'baseref' || key === 'base ref';
+  });
+
+  const attributeValue = cleanText(attributeMatch?.displayValue ?? attributeMatch?.value ?? '').trim();
+  if (attributeValue) return attributeValue;
+
+  const attributeText = cleanText((product as AnyRecord).attributeText);
+  const match = attributeText.match(/Referencia base acabado(?:\s+Referencia base acabado)?\s+\w+\s+([A-Z0-9-]+)/i);
+  return cleanText(match?.[1]).trim();
+};
+
+const matchesTextOperator = (values: unknown[], query: string, operator: TextMatchOperator) => {
+  const normalizedQuery = normalizeKey(query);
+  if (!normalizedQuery) return true;
+
+  const haystackValues = values
+    .map(value => cleanText(value).trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!haystackValues.length) return operator === 'is_not';
+
+  const matchesValue = (value: string) => {
+    switch (operator) {
+      case 'is':
+        return value === normalizedQuery;
+      case 'starts_with':
+        return value.startsWith(normalizedQuery);
+      case 'is_not':
+        return value !== normalizedQuery;
+      case 'contains':
+      default:
+        return value.includes(normalizedQuery);
+    }
+  };
+
+  return operator === 'is_not'
+    ? haystackValues.every(matchesValue)
+    : haystackValues.some(matchesValue);
 };
 
 export const getProductBrand = (product: Product) => {
@@ -241,6 +292,17 @@ const getVariantParentId = (product: Product) =>
 const getProductTypeKey = (product: Product) =>
   normalizeKey((product as AnyRecord).type || (product.metadata as AnyRecord | undefined)?.type);
 
+const getVariantGroupSelectionId = (product: Product) => {
+  const typeKey = getProductTypeKey(product);
+  const parentId = getVariantParentId(product);
+  const baseReference = getBaseReference(product);
+
+  if (typeKey === 'group') return `group:${product.id}`;
+  if (parentId) return `group:${parentId}`;
+  if (baseReference) return `base:${baseReference}`;
+  return '';
+};
+
 export const isTestProduct = (product: Product) => {
   const haystack = [
     product.id,
@@ -308,6 +370,7 @@ export const groupProductsForDisplay = (products: Product[]) => {
   const buckets = new Map<string, GroupBucket>();
   const groupRootsById = new Map<string, Product>();
   const groupRootsByPrefix = new Map<string, Product>();
+  const groupRootsByBaseReference = new Map<string, Product>();
 
   const getNumberValue = (product: Product) => cleanText(((product as AnyRecord).number || product.sku || product.id) as unknown).trim();
   const getDisplayName = (product: Product) => cleanText(product.name).trim().toLowerCase();
@@ -326,6 +389,7 @@ export const groupProductsForDisplay = (products: Product[]) => {
     if (getProductTypeKey(product) !== 'group') continue;
     const numberValue = getNumberValue(product);
     const prefix = extractVariantPrefix(numberValue);
+    const baseReference = getBaseReference(product);
     if (!groupRootsById.has(product.id)) {
       groupRootsById.set(product.id, product);
     }
@@ -335,6 +399,9 @@ export const groupProductsForDisplay = (products: Product[]) => {
     if (numberValue && !groupRootsByPrefix.has(numberValue)) {
       groupRootsByPrefix.set(numberValue, product);
     }
+    if (baseReference && !groupRootsByBaseReference.has(baseReference)) {
+      groupRootsByBaseReference.set(baseReference, product);
+    }
   }
 
   for (const product of products) {
@@ -342,8 +409,10 @@ export const groupProductsForDisplay = (products: Product[]) => {
     const parentId = getVariantParentId(product);
     const numberValue = getNumberValue(product);
     const prefix = extractVariantPrefix(numberValue);
+    const baseReference = getBaseReference(product);
     const matchedRoot =
       (parentId && groupRootsById.get(parentId)) ||
+      (baseReference && groupRootsByBaseReference.get(baseReference)) ||
       (prefix && groupRootsByPrefix.get(prefix)) ||
       (numberValue && groupRootsByPrefix.get(numberValue)) ||
       null;
@@ -353,8 +422,10 @@ export const groupProductsForDisplay = (products: Product[]) => {
         : typeKey === 'variant' && parentId
           ? `group:${parentId}`
           : matchedRoot
-          ? `group:${matchedRoot.id}`
-          : `single:${product.id}`;
+            ? `group:${matchedRoot.id}`
+            : baseReference
+              ? `base:${baseReference}`
+              : `single:${product.id}`;
 
     if (!buckets.has(bucketId)) {
       buckets.set(bucketId, {
@@ -409,7 +480,22 @@ export const groupProductsForDisplay = (products: Product[]) => {
       const sortedMembers = [...bucket.members].sort(
         (a, b) => scoreForRepresentative(b) - scoreForRepresentative(a) || cleanText(a.name).localeCompare(cleanText(b.name), 'es')
       );
-      const representative = bucket.representative || sortedMembers[0] || null;
+      const bucketBaseReference = bucket.id.startsWith('base:') ? bucket.id.slice(5) : '';
+      const representative =
+        bucket.representative ||
+        (bucketBaseReference
+          ? sortedMembers.find(product => {
+              const normalizedBucketBaseReference = normalizeKey(bucketBaseReference);
+              const productNumber = normalizeKey(((product as AnyRecord).number || product.sku || '') as unknown);
+              const productBaseReference = normalizeKey(getBaseReference(product));
+              return (
+                productNumber === normalizedBucketBaseReference ||
+                productBaseReference === normalizedBucketBaseReference
+              );
+            }) || null
+          : null) ||
+        sortedMembers[0] ||
+        null;
 
       if (!representative) return null;
 
@@ -420,6 +506,11 @@ export const groupProductsForDisplay = (products: Product[]) => {
         [...bucket.members]
           .sort((a, b) => scoreForMediaSource(b) - scoreForMediaSource(a) || scoreForRepresentative(b) - scoreForRepresentative(a))[0] ||
         representative;
+      const resolvedBaseReference =
+        getBaseReference(representative) ||
+        bucketBaseReference ||
+        getBaseReference(sortedMembers[0]) ||
+        '';
 
       return {
         ...representative,
@@ -427,6 +518,7 @@ export const groupProductsForDisplay = (products: Product[]) => {
         images: mediaSource?.images || representative.images,
         attachments: mediaSource ? (mediaSource as AnyRecord).attachments || (representative as AnyRecord).attachments : (representative as AnyRecord).attachments,
         assets: mediaSource ? (mediaSource as AnyRecord).assets || (representative as AnyRecord).assets : (representative as AnyRecord).assets,
+        baseReference: resolvedBaseReference,
         variants,
         variantCount: variants.length,
         variantGroupId: bucket.id,
@@ -678,6 +770,32 @@ export const buildFacetOptions = (products: Product[], selector: (product: Produ
     .map(([id, count]) => ({ id, label: id, count }));
 };
 
+export const buildVariantGroupOptions = (products: Product[]): FacetOption[] => {
+  const groups = groupProductsForDisplay(products).filter(product => (product as AnyRecord).isVariantGroup);
+
+  return groups
+    .map(product => {
+      const id = cleanText((product as AnyRecord).variantGroupId || getVariantGroupSelectionId(product)).trim();
+      if (!id) return null;
+
+      const baseReference = cleanText((product as AnyRecord).baseReference).trim();
+      const sku = cleanText(((product as AnyRecord).number || product.sku || '') as unknown).trim();
+      const name = cleanText(product.name).trim() || baseReference || sku || product.id;
+      const labelSuffix = baseReference && baseReference !== sku ? ` · ${baseReference}` : '';
+      const count = Array.isArray((product as AnyRecord).variants)
+        ? ((product as AnyRecord).variants as Product[]).length + 1
+        : 1;
+
+      return {
+        id,
+        label: `${name}${labelSuffix}`,
+        count,
+      };
+    })
+    .filter((option): option is FacetOption => Boolean(option))
+    .sort((a, b) => a.label.localeCompare(b.label, 'es'));
+};
+
 export const buildPriceRange = (products: Product[]): { min: number; max: number } => {
   let min = Infinity;
   let max = -Infinity;
@@ -696,8 +814,10 @@ export const filterProducts = (
   searchTerm: string,
   selectedName: string,
   selectedNumber: string,
+  selectedNumberOperator: TextMatchOperator,
   selectedCollection: string,
   selectedRange: string,
+  selectedVariantGroup: string,
   selectedPriceMin: string,
   selectedPriceMax: string,
   selectedEan: string,
@@ -717,6 +837,7 @@ export const filterProducts = (
   const normalizedNumber = cleanText(selectedNumber).trim();
   const normalizedCollection = cleanText(selectedCollection).trim();
   const normalizedRange = cleanText(selectedRange).trim();
+  const normalizedVariantGroup = cleanText(selectedVariantGroup).trim();
   const normalizedEan = cleanText(selectedEan).trim();
   const normalizedFlow = cleanText(selectedFlow).trim();
   const normalizedFinish = cleanText(selectedFinish).trim();
@@ -731,17 +852,13 @@ export const filterProducts = (
   }
 
   if (normalizedNumber) {
-    const query = normalizedNumber.toLowerCase();
-    next = next.filter(product => {
-      const haystack = [
-        product.sku,
-        (product as AnyRecord).number,
-        product.id,
-      ]
-        .map(value => cleanText(value).toLowerCase())
-        .join(' ');
-      return haystack.includes(query);
-    });
+    next = next.filter(product =>
+      matchesTextOperator(
+        [product.sku, (product as AnyRecord).number, product.id],
+        normalizedNumber,
+        selectedNumberOperator
+      )
+    );
   }
 
   if (normalizedCollection) {
@@ -750,6 +867,10 @@ export const filterProducts = (
 
   if (normalizedRange) {
     next = next.filter(product => matchesStructuredQuery([(product as AnyRecord).range], normalizedRange));
+  }
+
+  if (normalizedVariantGroup) {
+    next = next.filter(product => getVariantGroupSelectionId(product) === normalizedVariantGroup);
   }
 
   if (normalizedEan) {

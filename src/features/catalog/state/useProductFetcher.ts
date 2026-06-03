@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchCatalogPage,
   getCachedCatalogPage,
@@ -18,6 +18,7 @@ const EMPTY_META: CatalogPageMeta = {
   categoryLabelMap: {},
   brandOptions: [],
   rangeOptions: [],
+  variantGroupOptions: [],
   flowOptions: [],
   finishOptions: [],
   priceRange: { min: 0, max: 0 },
@@ -45,7 +46,7 @@ export function useProductFetcher(query: CatalogQueryParams) {
   const requestTokenRef = useRef(0);
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
 
-  const reloadProducts = async () => {
+  const reloadProducts = useCallback(async () => {
     const token = ++requestTokenRef.current;
     try {
       const cached = getCachedCatalogPage(query);
@@ -72,7 +73,7 @@ export function useProductFetcher(query: CatalogQueryParams) {
     } finally {
       if (requestTokenRef.current === token) setLoading(false);
     }
-  };
+  }, [queryKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     void reloadProducts();

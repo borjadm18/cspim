@@ -13,6 +13,7 @@ import {
   buildCategoryLabelMap,
   buildCategoryOptions,
   buildCategoryTree,
+  buildVariantGroupOptions,
   buildStatusOptions,
   buildTypeOptions,
   cleanText,
@@ -25,6 +26,7 @@ import {
   isTestProduct,
   normalizeKey,
   resolveCategorySelectionIds,
+  type CategoryTreeNode,
 } from './_lib/catalogUtils.js';
 import type { Product } from '../src/features/catalog/api/productService.js';
 import { requireAuth } from './_lib/auth.js';
@@ -59,6 +61,8 @@ type DefinitionRecord = {
   group?: string | null;
   dataType?: string;
 };
+
+type CategoryNodeRecord = { id: string; name: string; parentId: string | null };
 
 type CatalogBaseMeta = Omit<
   CatalogPageMeta,
@@ -138,6 +142,7 @@ const BLUESTONE_ATTEMPTS = 4;
 const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 1;
 
 const definitionCache = new Map<string, Promise<Map<string, DefinitionRecord>>>();
+const categoryNodeCache = new Map<string, Promise<Map<string, CategoryNodeRecord>>>();
 const catalogCache = new Map<string, CatalogCacheEntry>();
 const refreshInFlight = new Map<string, Promise<CatalogCacheEntry>>();
 const slimBuildInFlight = new Map<string, Promise<CatalogCacheEntry>>();
@@ -509,6 +514,62 @@ const fetchDefinitions = async (tenant: TenantConfig, token: string) => {
   return promise;
 };
 
+const fetchCategoryNodes = async (tenant: TenantConfig, token: string): Promise<Map<string, CategoryNodeRecord>> => {
+  const cacheKey = buildTenantCacheKey(tenant);
+  const cached = categoryNodeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const promise = (async () => {
+    const baseUrl = getBaseUrl(tenant.env);
+    const nodes = new Map<string, CategoryNodeRecord>();
+    let page = 0;
+    const pageSize = 1000;
+
+    while (true) {
+      const response = await fetchWithRetry(
+        `${baseUrl}/pim/catalogs/nodes/list`,
+        {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+            'x-organization-id': tenant.orgId,
+            context: tenant.context || 'en',
+            'context-fallback': 'true',
+          },
+          body: JSON.stringify({ filters: [], page, pageSize }),
+        },
+        3,
+        15_000
+      );
+
+      if (!response.ok) break;
+
+      const payload = (await response.json()) as { data?: unknown[]; totalElements?: number };
+      const batch = Array.isArray(payload?.data) ? payload.data : [];
+      if (!batch.length) break;
+
+      for (const node of batch) {
+        const n = node as Record<string, unknown>;
+        const id = String(n.id || '');
+        if (!id) continue;
+        const name = extractLocalizedValue(n.name || n.label || n.title || '');
+        const parentId = n.parentId ? String(n.parentId) : null;
+        nodes.set(id, { id, name: cleanText(name) || id, parentId });
+      }
+
+      if (batch.length < pageSize) break;
+      page += 1;
+    }
+
+    return nodes;
+  })();
+
+  categoryNodeCache.set(cacheKey, promise);
+  return promise;
+};
+
 const getAccessToken = async (tenant: TenantConfig): Promise<string> => {
   const cacheKey = buildTenantCacheKey(tenant);
   const cached = accessTokenCache.get(cacheKey);
@@ -842,6 +903,7 @@ const normalizeCatalogProduct = (
   const previewImageAssetId = previewImage?.id ?? assetIds[0];
   const collection = getAttributeText(attributes, ATTRIBUTE_KEYSETS.collection);
   const range = getAttributeText(attributes, ATTRIBUTE_KEYSETS.range);
+  const baseReference = getAttributeText(attributes, ['referencia base acabado', 'base ref', 'baseref']);
   const ean = getAttributeText(attributes, ATTRIBUTE_KEYSETS.ean);
   const flowRate = getAttributeText(attributes, ATTRIBUTE_KEYSETS.flowRate);
   const finish = getAttributeText(attributes, ATTRIBUTE_KEYSETS.finish);
@@ -855,6 +917,7 @@ const normalizeCatalogProduct = (
     sku: cleanText(metadataNumber || product.number || product.sku || ''),
     number: cleanText(metadataNumber || product.number || ''),
     variantParentId: cleanText(metadata.variantParentId || product.variantParentId || ''),
+    baseReference,
     images: includeMediaUrls ? media.images : [],
     attachments: includeMediaUrls ? media.attachments : [],
     previewImageAssetId,
@@ -935,10 +998,74 @@ const isMediaFilter = (value: unknown): value is MediaFilter =>
 const isQuickFilter = (value: unknown): value is QuickFilter =>
   value === 'all' || value === 'images' || value === 'attachments' || value === 'categories' || value === 'assets';
 
-const buildCatalogBaseMeta = (products: Product[]): CatalogBaseMeta => {
-  const categoryLabelMap = buildCategoryLabelMap(products);
-  const categoryOptions = buildCategoryOptions(products, categoryLabelMap);
-  const categoryTree = buildCategoryTree(categoryOptions);
+const buildCategoryTreeFromNodes = (
+  products: Product[],
+  nodeMap: Map<string, CategoryNodeRecord>
+): { categoryLabelMap: Record<string, string>; categoryTree: CategoryTreeNode[] } => {
+  const countMap = new Map<string, number>();
+  for (const product of products) {
+    const ids: string[] = Array.isArray((product as any).categories) ? (product as any).categories : [];
+    for (const id of ids) {
+      if (id) countMap.set(id, (countMap.get(id) ?? 0) + 1);
+    }
+  }
+
+  const categoryLabelMap: Record<string, string> = {};
+  for (const [id, node] of nodeMap.entries()) {
+    if (node.name) categoryLabelMap[id] = node.name;
+  }
+
+  // Collect all needed nodes (leaf categories + ancestors)
+  const neededIds = new Set<string>();
+  for (const id of countMap.keys()) {
+    neededIds.add(id);
+    let cur = nodeMap.get(id);
+    while (cur?.parentId && nodeMap.has(cur.parentId)) {
+      neededIds.add(cur.parentId);
+      cur = nodeMap.get(cur.parentId);
+    }
+  }
+
+  // Build children map (only among needed nodes)
+  const childrenMap = new Map<string | null, string[]>();
+  for (const id of neededIds) {
+    const node = nodeMap.get(id);
+    const parent = node?.parentId && neededIds.has(node.parentId) ? node.parentId : null;
+    if (!childrenMap.has(parent)) childrenMap.set(parent, []);
+    childrenMap.get(parent)!.push(id);
+  }
+
+  const buildNode = (id: string): CategoryTreeNode => {
+    const node = nodeMap.get(id);
+    const children = (childrenMap.get(id) || [])
+      .map(childId => buildNode(childId))
+      .filter(child => child.count > 0)
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'es'));
+
+    const direct = countMap.get(id) ?? 0;
+    const total = direct + children.reduce((sum, c) => sum + c.count, 0);
+    return { id, label: node?.name || id, count: total, children };
+  };
+
+  const categoryTree = (childrenMap.get(null) || [])
+    .map(id => buildNode(id))
+    .filter(node => node.count > 0)
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'es'));
+
+  return { categoryLabelMap, categoryTree };
+};
+
+const buildCatalogBaseMeta = (products: Product[], nodeMap?: Map<string, CategoryNodeRecord>): CatalogBaseMeta => {
+  let categoryLabelMap: Record<string, string>;
+  let categoryTree: CategoryTreeNode[];
+
+  if (nodeMap && nodeMap.size > 0) {
+    ({ categoryLabelMap, categoryTree } = buildCategoryTreeFromNodes(products, nodeMap));
+  } else {
+    categoryLabelMap = buildCategoryLabelMap(products);
+    const categoryOptions = buildCategoryOptions(products, categoryLabelMap);
+    categoryTree = buildCategoryTree(categoryOptions);
+  }
   const visibleCatalogCount = products.filter(product => normalizeKey(product.type) !== 'variant').length;
 
   return {
@@ -947,6 +1074,7 @@ const buildCatalogBaseMeta = (products: Product[]): CatalogBaseMeta => {
     categoryLabelMap,
     brandOptions: buildBrandOptions(products),
     rangeOptions: buildFacetOptions(products, product => product.range),
+    variantGroupOptions: buildVariantGroupOptions(products),
     flowOptions: buildFacetOptions(products, product => product.flowRate),
     finishOptions: buildFacetOptions(products, product => product.finish),
     priceRange: buildPriceRange(products),
@@ -970,8 +1098,15 @@ const parseCatalogQuery = (query: Record<string, unknown>): CatalogQueryParams =
   searchTerm: typeof query.searchTerm === 'string' ? query.searchTerm : '',
   selectedName: typeof query.selectedName === 'string' ? query.selectedName : '',
   selectedNumber: typeof query.selectedNumber === 'string' ? query.selectedNumber : '',
+  selectedNumberOperator:
+    query.selectedNumberOperator === 'is' ||
+    query.selectedNumberOperator === 'starts_with' ||
+    query.selectedNumberOperator === 'is_not'
+      ? query.selectedNumberOperator
+      : 'contains',
   selectedCollection: typeof query.selectedCollection === 'string' ? query.selectedCollection : '',
   selectedRange: typeof query.selectedRange === 'string' ? query.selectedRange : '',
+  selectedVariantGroup: typeof query.selectedVariantGroup === 'string' ? query.selectedVariantGroup : '',
   selectedPriceMin: typeof query.selectedPriceMin === 'string' ? query.selectedPriceMin : '',
   selectedPriceMax: typeof query.selectedPriceMax === 'string' ? query.selectedPriceMax : '',
   selectedEan: typeof query.selectedEan === 'string' ? query.selectedEan : '',
@@ -993,8 +1128,10 @@ const buildCatalogPage = (entry: CatalogCacheEntry, query: CatalogQueryParams) =
     query.searchTerm,
     query.selectedName,
     query.selectedNumber,
+    query.selectedNumberOperator,
     query.selectedCollection,
     query.selectedRange,
+    query.selectedVariantGroup,
     query.selectedPriceMin,
     query.selectedPriceMax,
     query.selectedEan,
@@ -1067,6 +1204,7 @@ const readSupabaseCache = async (cacheKey: string): Promise<CatalogCacheEntry | 
         ...buildCatalogBaseMeta(products),
         ...storedMeta,
         rangeOptions: Array.isArray(storedMeta.rangeOptions) ? storedMeta.rangeOptions : [],
+        variantGroupOptions: Array.isArray(storedMeta.variantGroupOptions) ? storedMeta.variantGroupOptions : [],
         flowOptions: Array.isArray(storedMeta.flowOptions) ? storedMeta.flowOptions : [],
         finishOptions: Array.isArray(storedMeta.finishOptions) ? storedMeta.finishOptions : [],
         priceRange:
@@ -1149,6 +1287,7 @@ const buildSlimCatalogIndex = (tenant: TenantConfig, cacheKey: string): Promise<
   const promise = (async () => {
     const token = await getAccessToken(tenant);
     const baseUrl = getBaseUrl(tenant.env);
+    const nodeMap = await fetchCategoryNodes(tenant, token).catch(() => new Map<string, CategoryNodeRecord>());
     const allProducts: Record<string, unknown>[] = [];
     let cursor: string | null = null;
 
@@ -1205,7 +1344,7 @@ const buildSlimCatalogIndex = (tenant: TenantConfig, cacheKey: string): Promise<
 
     const entry: CatalogCacheEntry = {
       data: normalizedProducts,
-      meta: { ...buildCatalogBaseMeta(normalizedProducts), slim: true },
+      meta: { ...buildCatalogBaseMeta(normalizedProducts, nodeMap), slim: true },
       fetchedAt: Date.now(),
     };
 
@@ -1224,7 +1363,10 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
   const promise = (async () => {
     const token = await getAccessToken(tenant);
     const baseUrl = getBaseUrl(tenant.env);
-    const definitionMap = await fetchDefinitions(tenant, token);
+    const [definitionMap, nodeMap] = await Promise.all([
+      fetchDefinitions(tenant, token),
+      fetchCategoryNodes(tenant, token).catch(() => new Map<string, CategoryNodeRecord>()),
+    ]);
     const allProducts: Record<string, unknown>[] = [];
     let cursor: string | null = null;
 
@@ -1304,7 +1446,7 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
 
     const entry: CatalogCacheEntry = {
       data: normalizedProducts,
-      meta: buildCatalogBaseMeta(normalizedProducts),
+      meta: buildCatalogBaseMeta(normalizedProducts, nodeMap),
       fetchedAt: Date.now(),
     };
 

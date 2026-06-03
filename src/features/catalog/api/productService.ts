@@ -1,6 +1,6 @@
 import { CATALOG_SOURCE_MODE } from '../../../shared/config/catalogTenant';
 import { supabase } from '../../../lib/supabase';
-import type { CatalogPageResponse, CatalogQueryParams } from '../model/catalogTypes';
+import type { CatalogPageResponse, CatalogQueryParams, TextMatchOperator } from '../model/catalogTypes';
 
 export interface ProductImage {
   id?: string;
@@ -39,6 +39,7 @@ export interface Product {
   sku?: string;
   number?: string;
   variantParentId?: string;
+  baseReference?: string;
   attributeText?: string;
   previewImageAssetId?: string;
   previewImageAlt?: string;
@@ -63,6 +64,8 @@ export interface Product {
   hasDocument?: boolean;
   hasAsset?: boolean;
   variants?: Record<string, unknown>[];
+  variantGroupId?: string;
+  isVariantGroup?: boolean;
   [key: string]: any;
 }
 
@@ -82,9 +85,11 @@ const buildCatalogQueryKey = (query: CatalogQueryParams) =>
     sortBy: query.sortBy,
     searchTerm: query.searchTerm,
     selectedName: query.selectedName,
-    selectedNumber: query.selectedNumber,
-    selectedCollection: query.selectedCollection,
-    selectedRange: query.selectedRange,
+      selectedNumber: query.selectedNumber,
+      selectedNumberOperator: query.selectedNumberOperator,
+      selectedCollection: query.selectedCollection,
+      selectedRange: query.selectedRange,
+      selectedVariantGroup: query.selectedVariantGroup,
     selectedPriceMin: query.selectedPriceMin,
     selectedPriceMax: query.selectedPriceMax,
     selectedEan: query.selectedEan,
@@ -366,6 +371,7 @@ const normalizeLegacyProduct = (raw: any): Product => {
     description: cleanText(metadataDescription || extractLocalizedValue(raw.description) || ''),
     sku: cleanText(metadataNumber || raw.number || raw.sku || ''),
     variantParentId: cleanText(metadata.variantParentId || raw.variantParentId || ''),
+    baseReference: cleanText(raw.baseReference || ''),
     attributeText: cleanText(raw.attributeText || ''),
     previewImageAssetId: cleanText(raw.previewImageAssetId || ''),
     previewImageAlt: cleanText(raw.previewImageAlt || ''),
@@ -394,6 +400,9 @@ const normalizeLegacyProduct = (raw: any): Product => {
     state: metadata.state || raw.state,
     lastUpdate: metadata.lastUpdate || raw.lastUpdate,
     createDate: metadata.createDate || raw.createDate,
+    variants: Array.isArray(raw.variants) ? raw.variants : [],
+    variantGroupId: cleanText(raw.variantGroupId || ''),
+    isVariantGroup: Boolean(raw.isVariantGroup),
   };
 };
 
@@ -426,6 +435,7 @@ const buildLocalCatalogResponse = async (query: CatalogQueryParams): Promise<Cat
       categoryLabelMap: {},
       brandOptions: [],
       rangeOptions: [],
+      variantGroupOptions: [],
       flowOptions: [],
       finishOptions: [],
       priceRange: { min: 0, max: 0 },
@@ -461,8 +471,10 @@ export const fetchCatalogPage = async (query: CatalogQueryParams): Promise<Catal
     searchTerm: query.searchTerm,
     selectedName: query.selectedName,
     selectedNumber: query.selectedNumber,
+    selectedNumberOperator: query.selectedNumberOperator,
     selectedCollection: query.selectedCollection,
     selectedRange: query.selectedRange,
+    selectedVariantGroup: query.selectedVariantGroup,
     selectedPriceMin: query.selectedPriceMin,
     selectedPriceMax: query.selectedPriceMax,
     selectedEan: query.selectedEan,
@@ -535,8 +547,10 @@ export const fetchProducts = async (tenantId: string): Promise<Product[]> => {
     searchTerm: '',
     selectedName: '',
     selectedNumber: '',
+    selectedNumberOperator: 'contains' satisfies TextMatchOperator,
     selectedCollection: '',
     selectedRange: '',
+    selectedVariantGroup: '',
     selectedPriceMin: '',
     selectedPriceMax: '',
     selectedEan: '',

@@ -52,9 +52,6 @@ const isValidAssetUrl = (v: string): boolean => {
   try { return new URL(v).protocol === 'https:'; } catch { return false; }
 };
 
-const isValidImageDataUrl = (value: string): boolean =>
-  /^data:image\/[a-zA-Z0-9.+-]+;base64,/.test(value);
-
 const normalizeShortText = (value: unknown, maxLength: number): string | undefined => {
   if (typeof value !== 'string') return undefined;
   const next = value.trim();
@@ -67,17 +64,17 @@ const normalizeSettings = (value: unknown): CatalogSettings => {
   return {
     pageSize: typeof candidate.pageSize === 'number' ? candidate.pageSize : DEFAULT_SETTINGS.pageSize,
     density: candidate.density === 'compact' ? 'compact' : 'comfortable',
-    logoUrl: typeof candidate.logoUrl === 'string' && (isValidAssetUrl(candidate.logoUrl.trim()) || isValidImageDataUrl(candidate.logoUrl.trim()))
+    logoUrl: typeof candidate.logoUrl === 'string' && isValidAssetUrl(candidate.logoUrl.trim())
       ? candidate.logoUrl.trim()
       : undefined,
     faviconUrl:
       typeof candidate.faviconUrl === 'string' &&
-      (isValidAssetUrl(candidate.faviconUrl.trim()) || isValidImageDataUrl(candidate.faviconUrl.trim()))
+      isValidAssetUrl(candidate.faviconUrl.trim())
         ? candidate.faviconUrl.trim()
         : undefined,
     loginHeroImageUrl:
       typeof candidate.loginHeroImageUrl === 'string' &&
-      (isValidAssetUrl(candidate.loginHeroImageUrl.trim()) || isValidImageDataUrl(candidate.loginHeroImageUrl.trim()))
+      isValidAssetUrl(candidate.loginHeroImageUrl.trim())
         ? candidate.loginHeroImageUrl.trim()
         : undefined,
     loginEyebrow: normalizeShortText(candidate.loginEyebrow, 48),

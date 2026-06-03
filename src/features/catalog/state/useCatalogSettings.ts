@@ -7,10 +7,26 @@ export const DEFAULT_SETTINGS: CatalogSettings = {
   pageSize: 30,
   density: 'comfortable',
   logoUrl: undefined,
+  faviconUrl: undefined,
+  loginHeroImageUrl: undefined,
+  loginEyebrow: undefined,
+  loginHeading: undefined,
+  loginBody: undefined,
   paletteId: DEFAULT_CATALOG_THEME_ID,
 };
 
 const SETTINGS_BY_TENANT_KEY = 'content-store.settings-by-tenant.v1';
+
+const keepRemoteAssetUrl = (value: unknown) =>
+  typeof value === 'string' && value.trim().startsWith('https://') ? value.trim() : undefined;
+
+const normalizePersistedSettings = (settings: CatalogSettings | null | undefined): CatalogSettings => ({
+  ...DEFAULT_SETTINGS,
+  ...(settings || {}),
+  logoUrl: keepRemoteAssetUrl(settings?.logoUrl),
+  faviconUrl: keepRemoteAssetUrl(settings?.faviconUrl),
+  loginHeroImageUrl: keepRemoteAssetUrl(settings?.loginHeroImageUrl),
+});
 
 const loadSettingsByTenant = (): Record<string, CatalogSettings> => {
   if (typeof window === 'undefined') return {};
@@ -20,7 +36,7 @@ const loadSettingsByTenant = (): Record<string, CatalogSettings> => {
     const parsed = JSON.parse(raw) as Record<string, CatalogSettings>;
     if (!parsed || typeof parsed !== 'object') return {};
     return Object.fromEntries(
-      Object.entries(parsed).map(([id, s]) => [id, { ...DEFAULT_SETTINGS, ...(s || {}) }])
+      Object.entries(parsed).map(([id, s]) => [id, normalizePersistedSettings(s)])
     );
   } catch {
     return {};
@@ -32,6 +48,7 @@ export function useCatalogSettings(selectedTenantId: string) {
     () => loadSettingsByTenant()
   );
   const [hydratedTenantSettings, setHydratedTenantSettings] = useState<Record<string, boolean>>({});
+  const [saveStateByTenant, setSaveStateByTenant] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -49,11 +66,10 @@ export function useCatalogSettings(selectedTenantId: string) {
       if (remote) {
         setSettingsByTenant(prev => ({
           ...prev,
-          [selectedTenantId]: {
-            ...DEFAULT_SETTINGS,
+          [selectedTenantId]: normalizePersistedSettings({
             ...(prev[selectedTenantId] || DEFAULT_SETTINGS),
             ...remote,
-          },
+          }),
         }));
       }
 
@@ -68,11 +84,6 @@ export function useCatalogSettings(selectedTenantId: string) {
 
   const settings = settingsByTenant[selectedTenantId] || DEFAULT_SETTINGS;
 
-  useEffect(() => {
-    if (!hydratedTenantSettings[selectedTenantId]) return;
-    void saveOrganizationSettings({ tenantId: selectedTenantId, settings });
-  }, [hydratedTenantSettings, selectedTenantId, settings]);
-
   const setSettingsForTenant = (
     tenantId: string,
     next: CatalogSettings | ((prev: CatalogSettings) => CatalogSettings)
@@ -80,7 +91,7 @@ export function useCatalogSettings(selectedTenantId: string) {
     setSettingsByTenant(prev => {
       const current = prev[tenantId] || DEFAULT_SETTINGS;
       const resolved = typeof next === 'function' ? next(current) : next;
-      return { ...prev, [tenantId]: { ...DEFAULT_SETTINGS, ...resolved } };
+      return { ...prev, [tenantId]: normalizePersistedSettings(resolved) };
     });
   };
 
@@ -89,5 +100,34 @@ export function useCatalogSettings(selectedTenantId: string) {
 
   const restoreDefaultSettings = () => setSettings(DEFAULT_SETTINGS);
 
-  return { settings, setSettings, setSettingsForTenant, restoreDefaultSettings };
+  const saveSettingsForTenant = async (tenantId: string) => {
+    const nextSettings = settingsByTenant[tenantId] || DEFAULT_SETTINGS;
+    setSaveStateByTenant(prev => ({ ...prev, [tenantId]: 'saving' }));
+
+    const ok = await saveOrganizationSettings({ tenantId, settings: nextSettings });
+    setSaveStateByTenant(prev => ({ ...prev, [tenantId]: ok ? 'saved' : 'error' }));
+
+    if (ok) {
+      window.setTimeout(() => {
+        setSaveStateByTenant(prev => ({
+          ...prev,
+          [tenantId]: prev[tenantId] === 'saved' ? 'idle' : prev[tenantId],
+        }));
+      }, 1800);
+    }
+
+    return ok;
+  };
+
+  const saveSettings = async () => saveSettingsForTenant(selectedTenantId);
+
+  return {
+    settings,
+    setSettings,
+    setSettingsForTenant,
+    restoreDefaultSettings,
+    saveSettings,
+    saveSettingsForTenant,
+    saveState: saveStateByTenant[selectedTenantId] || 'idle',
+  };
 }

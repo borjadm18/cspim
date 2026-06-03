@@ -108,8 +108,9 @@ export function ProductContentTab({
         <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
           <div className="mb-4 flex items-center justify-between gap-3">
             <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Imágenes</p>
-            <button type="button" onClick={onAddImage} className="text-xs font-medium text-blue-600 transition hover:text-blue-700">
-              + Añadir
+            <button type="button" onClick={onAddImage} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
+              <Plus className="h-3.5 w-3.5" />
+              Añadir
             </button>
           </div>
 
@@ -267,7 +268,7 @@ export function ProductContentTab({
                     <button
                       type="button"
                       onClick={() => void triggerDownload(attachment.downloadUrl || attachment.url, fileName)}
-                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
                     >
                       <Download className="h-3.5 w-3.5" />
                       {actionLabel}
@@ -282,7 +283,50 @@ export function ProductContentTab({
 
       {/* Right column: attributes */}
       <section className="space-y-4 bg-white px-5 py-5">
-        {/* File attributes — shown first for visibility */}
+        {/* Bluestone attributes */}
+        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
+              <p className="mt-1 text-xs text-slate-500">
+                {attributes.length} atributos con valor · {attributeGroups.length} grupos
+              </p>
+            </div>
+          </div>
+          {attributeGroups.length > 0 ? (
+            <div className="space-y-4">
+              {attributeGroups.map(group => (
+                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
+                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
+                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {group.attributes.map((attr: any) => (
+                      <div
+                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
+                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
+                      >
+                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
+                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
+                        </p>
+                        <div className="mt-2 min-h-[22px]">
+                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
+              No hay atributos con valor en este producto
+            </div>
+          )}
+        </div>
+
+        {/* File attributes */}
         {fileAttributes.length > 0 ? (
           <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
             <div className="mb-4 flex items-center justify-between gap-3">
@@ -330,7 +374,7 @@ export function ProductContentTab({
                           href={href}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
                         >
                           <ExternalLink className="h-3.5 w-3.5" />
                           Abrir
@@ -339,7 +383,7 @@ export function ProductContentTab({
                           <button
                             type="button"
                             onClick={() => void triggerDownload(href, title)}
-                            className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-slate-700 transition hover:bg-slate-50"
                           >
                             <Download className="h-3.5 w-3.5" />
                             Descargar
@@ -358,49 +402,6 @@ export function ProductContentTab({
             </div>
           </div>
         ) : null}
-
-        {/* Bluestone attributes */}
-        <div className="rounded-[24px] border border-slate-200 bg-white p-4 shadow-[0_12px_28px_rgba(15,23,42,0.05)]">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">Atributos de Bluestone</p>
-              <p className="mt-1 text-xs text-slate-500">
-                {attributes.length} atributos con valor · {attributeGroups.length} grupos
-              </p>
-            </div>
-          </div>
-          {attributeGroups.length > 0 ? (
-            <div className="space-y-4">
-              {attributeGroups.map(group => (
-                <div key={group.groupName} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3 border-b border-slate-200 pb-2">
-                    <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-gray-400">{group.groupName}</p>
-                    <span className="text-xs text-slate-400">{group.attributes.length}</span>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {group.attributes.map((attr: any) => (
-                      <div
-                        key={attr.definitionId || attr.name || `${group.groupName}-${attr.label || attr.definitionName || 'attribute'}`}
-                        className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]"
-                      >
-                        <p className="text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
-                          {attr.label || attr.definitionName || attr.name || 'Atributo'}
-                        </p>
-                        <div className="mt-2 min-h-[22px]">
-                          {renderAttributeValueNode(attr) || <span className="text-sm text-slate-400">—</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex min-h-[160px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-500">
-              No hay atributos con valor en este producto
-            </div>
-          )}
-        </div>
       </section>
     </div>
   );

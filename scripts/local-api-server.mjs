@@ -378,6 +378,7 @@ const normalizeCatalogProduct = (product, media, attributes) => {
   const assetIds = Array.isArray(product?.__assetIds) ? product.__assetIds : extractPreviewAssetIds(product);
   const collection = getAttributeText(attributes, ['collection', 'coleccion', 'colección']);
   const range = getAttributeText(attributes, ['69f1c5af54e43fd1f8a009f1', 'range', 'gama']);
+  const baseReference = getAttributeText(attributes, ['referencia base acabado', 'base ref', 'baseref']);
   const ean = getAttributeText(attributes, ['69f1c5af4f379fb27d452d06', 'ean', 'gtin', 'codigoean', 'códigoean', 'codigo ean', 'código ean']);
   const flowRate = getAttributeText(attributes, ['692d69b4f8de9bb8df7818d5', '6995d02329297e5aaf6e7796', 'caudal', 'flow rate', 'flowrate', 'l/min', 'l min']);
   const finish = getAttributeText(attributes, ['692962777118d05218bb7788', '6995d022fc7f3f7a6325fb21', 'acabado', 'acabados tres', 'acabados']);
@@ -390,6 +391,7 @@ const normalizeCatalogProduct = (product, media, attributes) => {
     sku: cleanText(metadataNumber || product?.number || product?.sku || ''),
     number: cleanText(metadataNumber || product?.number || ''),
     variantParentId: cleanText(metadata?.variantParentId || product?.variantParentId || ''),
+    baseReference,
     images: media.images,
     attachments: media.attachments,
     previewImageAssetId: media.images[0]?.id ?? assetIds[0],
@@ -494,6 +496,69 @@ const hasCategories = (product) =>
 const getVariantParentId = (product) =>
   cleanText(product?.variantParentId || product?.metadata?.variantParentId || '').trim();
 
+const getBaseReference = (product) => {
+  const explicit = cleanText(product?.baseReference).trim();
+  if (explicit) return explicit;
+
+  const attributes = Array.isArray(product?.attributes)
+    ? product.attributes
+    : Object.entries(product?.attributes || {}).map(([name, value]) => ({ name, value }));
+
+  const attributeMatch = attributes.find(attribute => {
+    const key = normalizeKey(
+      attribute?.definitionName || attribute?.name || attribute?.label || ''
+    );
+    return key.includes('referencia base acabado') || key === 'baseref' || key === 'base ref';
+  });
+
+  const attributeValue = cleanText(attributeMatch?.displayValue ?? attributeMatch?.value ?? '').trim();
+  if (attributeValue) return attributeValue;
+
+  const attributeText = cleanText(product?.attributeText);
+  const match = attributeText.match(/Referencia base acabado(?:\s+Referencia base acabado)?\s+\w+\s+([A-Z0-9-]+)/i);
+  return cleanText(match?.[1]).trim();
+};
+
+const matchesTextOperator = (values, query, operator) => {
+  const normalizedQuery = normalizeKey(query);
+  if (!normalizedQuery) return true;
+
+  const haystackValues = values
+    .map(value => cleanText(value).trim().toLowerCase())
+    .filter(Boolean);
+
+  if (!haystackValues.length) return operator === 'is_not';
+
+  const matchesValue = (value) => {
+    switch (operator) {
+      case 'is':
+        return value === normalizedQuery;
+      case 'starts_with':
+        return value.startsWith(normalizedQuery);
+      case 'is_not':
+        return value !== normalizedQuery;
+      case 'contains':
+      default:
+        return value.includes(normalizedQuery);
+    }
+  };
+
+  return operator === 'is_not'
+    ? haystackValues.every(matchesValue)
+    : haystackValues.some(matchesValue);
+};
+
+const getVariantGroupSelectionId = (product) => {
+  const typeKey = normalizeKey(product?.type || product?.metadata?.type);
+  const parentId = getVariantParentId(product);
+  const baseReference = getBaseReference(product);
+
+  if (typeKey === 'group') return `group:${product?.id}`;
+  if (parentId) return `group:${parentId}`;
+  if (baseReference) return `base:${baseReference}`;
+  return '';
+};
+
 const isTestProduct = (product) => {
   const haystack = [
     product?.id,
@@ -575,6 +640,7 @@ const groupProductsForDisplay = (products) => {
   const buckets = new Map();
   const groupRootsById = new Map();
   const groupRootsByPrefix = new Map();
+  const groupRootsByBaseReference = new Map();
 
   const getNumberValue = product => cleanText(product?.number || product?.sku || product?.id).trim();
   const getDisplayName = product => cleanText(product?.name).trim().toLowerCase();
@@ -593,9 +659,13 @@ const groupProductsForDisplay = (products) => {
     if (normalizeKey(product?.type) !== 'group') continue;
     const numberValue = getNumberValue(product);
     const prefix = extractVariantPrefix(numberValue);
+    const baseReference = getBaseReference(product);
     if (!groupRootsById.has(product.id)) groupRootsById.set(product.id, product);
     if (prefix && !groupRootsByPrefix.has(prefix)) groupRootsByPrefix.set(prefix, product);
     if (numberValue && !groupRootsByPrefix.has(numberValue)) groupRootsByPrefix.set(numberValue, product);
+    if (baseReference && !groupRootsByBaseReference.has(baseReference)) {
+      groupRootsByBaseReference.set(baseReference, product);
+    }
   }
 
   for (const product of products) {
@@ -603,8 +673,10 @@ const groupProductsForDisplay = (products) => {
     const parentId = getVariantParentId(product);
     const numberValue = getNumberValue(product);
     const prefix = extractVariantPrefix(numberValue);
+    const baseReference = getBaseReference(product);
     const matchedRoot =
       (parentId && groupRootsById.get(parentId)) ||
+      (baseReference && groupRootsByBaseReference.get(baseReference)) ||
       (prefix && groupRootsByPrefix.get(prefix)) ||
       (numberValue && groupRootsByPrefix.get(numberValue)) ||
       null;
@@ -615,7 +687,9 @@ const groupProductsForDisplay = (products) => {
           ? `group:${parentId}`
           : matchedRoot
             ? `group:${matchedRoot.id}`
-            : `single:${product.id}`;
+            : baseReference
+              ? `base:${baseReference}`
+              : `single:${product.id}`;
 
     if (!buckets.has(bucketId)) {
       buckets.set(bucketId, { id: bucketId, representative: null, members: [], syntheticKey: null });
@@ -652,7 +726,22 @@ const groupProductsForDisplay = (products) => {
       const sortedMembers = [...bucket.members].sort(
         (a, b) => scoreForRepresentative(b) - scoreForRepresentative(a) || compareStrings(a?.name, b?.name)
       );
-      const representative = bucket.representative || sortedMembers[0] || null;
+      const bucketBaseReference = bucket.id.startsWith('base:') ? bucket.id.slice(5) : '';
+      const representative =
+        bucket.representative ||
+        (bucketBaseReference
+          ? sortedMembers.find(product => {
+              const normalizedBucketBaseReference = normalizeKey(bucketBaseReference);
+              const productNumber = normalizeKey(product?.number || product?.sku || '');
+              const productBaseReference = normalizeKey(getBaseReference(product));
+              return (
+                productNumber === normalizedBucketBaseReference ||
+                productBaseReference === normalizedBucketBaseReference
+              );
+            }) || null
+          : null) ||
+        sortedMembers[0] ||
+        null;
       if (!representative) return null;
 
       const variants = bucket.members
@@ -662,6 +751,11 @@ const groupProductsForDisplay = (products) => {
         [...bucket.members].sort(
           (a, b) => scoreForMediaSource(b) - scoreForMediaSource(a) || scoreForRepresentative(b) - scoreForRepresentative(a)
         )[0] || representative;
+      const resolvedBaseReference =
+        getBaseReference(representative) ||
+        bucketBaseReference ||
+        getBaseReference(sortedMembers[0]) ||
+        '';
 
       return {
         ...representative,
@@ -669,6 +763,7 @@ const groupProductsForDisplay = (products) => {
         images: mediaSource?.images || representative.images,
         attachments: mediaSource?.attachments || representative.attachments,
         assets: mediaSource?.assets || representative.assets,
+        baseReference: resolvedBaseReference,
         variants,
         variantCount: variants.length,
         variantGroupId: bucket.id,
@@ -868,6 +963,30 @@ const buildFacetOptions = (products, pickValue) => {
   return [...countMap.values()].sort((left, right) => compareStrings(left.label, right.label));
 };
 
+const buildVariantGroupOptions = (products) => {
+  const groups = groupProductsForDisplay(products).filter(product => product?.isVariantGroup);
+
+  return groups
+    .map(product => {
+      const id = cleanText(product?.variantGroupId || getVariantGroupSelectionId(product)).trim();
+      if (!id) return null;
+
+      const baseReference = cleanText(product?.baseReference).trim();
+      const sku = cleanText(product?.number || product?.sku || '').trim();
+      const name = cleanText(product?.name).trim() || baseReference || sku || product?.id;
+      const labelSuffix = baseReference && baseReference !== sku ? ` · ${baseReference}` : '';
+      const count = Array.isArray(product?.variants) ? product.variants.length + 1 : 1;
+
+      return {
+        id,
+        label: `${name}${labelSuffix}`,
+        count,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => compareStrings(left.label, right.label));
+};
+
 const buildPriceRange = (products) => {
   const prices = products
     .map(product => (typeof product?.price === 'number' && Number.isFinite(product.price) ? product.price : null))
@@ -888,8 +1007,10 @@ const filterProducts = (
   searchTerm,
   selectedName,
   selectedNumber,
+  selectedNumberOperator,
   selectedCollection,
   selectedRange,
+  selectedVariantGroup,
   selectedPriceMin,
   selectedPriceMax,
   selectedEan,
@@ -908,6 +1029,7 @@ const filterProducts = (
   const normalizedNumber = cleanText(selectedNumber).trim();
   const normalizedCollection = cleanText(selectedCollection).trim();
   const normalizedRange = cleanText(selectedRange).trim();
+  const normalizedVariantGroup = cleanText(selectedVariantGroup).trim();
   const normalizedEan = cleanText(selectedEan).trim();
   const normalizedFlow = cleanText(selectedFlow).trim();
   const normalizedFinish = cleanText(selectedFinish).trim();
@@ -922,8 +1044,9 @@ const filterProducts = (
   }
 
   if (normalizedNumber) {
-    const query = normalizedNumber.toLowerCase();
-    next = next.filter(product => [product?.sku, product?.number, product?.id].map(value => cleanText(value).toLowerCase()).join(' ').includes(query));
+    next = next.filter(product =>
+      matchesTextOperator([product?.sku, product?.number, product?.id], normalizedNumber, selectedNumberOperator)
+    );
   }
 
   if (normalizedCollection) {
@@ -932,6 +1055,10 @@ const filterProducts = (
 
   if (normalizedRange) {
     next = next.filter(product => matchesStructuredQuery([product?.range], normalizedRange));
+  }
+
+  if (normalizedVariantGroup) {
+    next = next.filter(product => getVariantGroupSelectionId(product) === normalizedVariantGroup);
   }
 
   if (normalizedEan) {
@@ -1059,6 +1186,7 @@ const buildCatalogBaseMeta = (products) => {
     categoryLabelMap,
     brandOptions: buildBrandOptions(products),
     rangeOptions: buildFacetOptions(products, product => product?.range),
+    variantGroupOptions: buildVariantGroupOptions(products),
     flowOptions: buildFacetOptions(products, product => product?.flowRate),
     finishOptions: buildFacetOptions(products, product => product?.finish),
     priceRange: buildPriceRange(products),
@@ -1082,8 +1210,12 @@ const parseCatalogQuery = (searchParams) => ({
   searchTerm: searchParams.get('searchTerm') || '',
   selectedName: searchParams.get('selectedName') || '',
   selectedNumber: searchParams.get('selectedNumber') || '',
+  selectedNumberOperator: ['is', 'starts_with', 'is_not'].includes(searchParams.get('selectedNumberOperator') || '')
+    ? searchParams.get('selectedNumberOperator')
+    : 'contains',
   selectedCollection: searchParams.get('selectedCollection') || '',
   selectedRange: searchParams.get('selectedRange') || '',
+  selectedVariantGroup: searchParams.get('selectedVariantGroup') || '',
   selectedPriceMin: searchParams.get('selectedPriceMin') || '',
   selectedPriceMax: searchParams.get('selectedPriceMax') || '',
   selectedEan: searchParams.get('selectedEan') || '',
@@ -1105,8 +1237,10 @@ const buildCatalogPage = (entry, query) => {
     query.searchTerm,
     query.selectedName,
     query.selectedNumber,
+    query.selectedNumberOperator,
     query.selectedCollection,
     query.selectedRange,
+    query.selectedVariantGroup,
     query.selectedPriceMin,
     query.selectedPriceMax,
     query.selectedEan,

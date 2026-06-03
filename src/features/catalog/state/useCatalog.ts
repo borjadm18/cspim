@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CATALOG_ACCESS_MODE,
   CATALOG_DEFAULT_TENANT_ID,
@@ -56,8 +56,10 @@ const buildCurrentSnapshot = (
   searchTerm: string,
   selectedName: string,
   selectedNumber: string,
+  selectedNumberOperator: 'contains' | 'is' | 'starts_with' | 'is_not',
   selectedCollection: string,
   selectedRange: string,
+  selectedVariantGroup: string,
   selectedPriceMin: string,
   selectedPriceMax: string,
   selectedEan: string,
@@ -77,8 +79,10 @@ const buildCurrentSnapshot = (
   searchTerm,
   selectedName,
   selectedNumber,
+  selectedNumberOperator,
   selectedCollection,
   selectedRange,
+  selectedVariantGroup,
   selectedPriceMin,
   selectedPriceMax,
   selectedEan,
@@ -100,8 +104,10 @@ export function useCatalog() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedName, setSelectedName] = useState('');
   const [selectedNumber, setSelectedNumber] = useState('');
+  const [selectedNumberOperator, setSelectedNumberOperator] = useState<'contains' | 'is' | 'starts_with' | 'is_not'>('contains');
   const [selectedCollection, setSelectedCollection] = useState('');
   const [selectedRange, setSelectedRange] = useState('');
+  const [selectedVariantGroup, setSelectedVariantGroup] = useState('');
   const [selectedPriceMin, setSelectedPriceMin] = useState('');
   const [selectedPriceMax, setSelectedPriceMax] = useState('');
   const [selectedEan, setSelectedEan] = useState('');
@@ -120,8 +126,9 @@ export function useCatalog() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [hasAppliedSharedView, setHasAppliedSharedView] = useState(false);
   const [tenantOptions, setTenantOptions] = useState<CatalogTenantOption[]>(() => CATALOG_TENANT_OPTIONS);
+  const hasFetchedOrganizationsRef = useRef(false);
 
-  const { settings, setSettings, setSettingsForTenant, restoreDefaultSettings } =
+  const { settings, setSettings, setSettingsForTenant, restoreDefaultSettings, saveSettings, saveState } =
     useCatalogSettings(selectedTenantId);
 
   const catalogQuery = useMemo<CatalogQueryParams>(
@@ -133,8 +140,10 @@ export function useCatalog() {
       searchTerm,
       selectedName,
       selectedNumber,
+      selectedNumberOperator,
       selectedCollection,
       selectedRange,
+      selectedVariantGroup,
       selectedPriceMin,
       selectedPriceMax,
       selectedEan,
@@ -157,8 +166,10 @@ export function useCatalog() {
       selectedMediaFilter,
       selectedName,
       selectedNumber,
+      selectedNumberOperator,
       selectedCollection,
       selectedRange,
+      selectedVariantGroup,
       selectedPriceMin,
       selectedPriceMax,
       selectedEan,
@@ -219,14 +230,19 @@ export function useCatalog() {
       }
     };
 
-    if (CATALOG_ACCESS_MODE === 'admin' || import.meta.env.PROD) {
+    const shouldHydrateOrganizations =
+      CATALOG_ACCESS_MODE === 'admin' ||
+      (tenantOptions.length === 1 && tenantOptions[0]?.id === CATALOG_DEFAULT_TENANT_ID);
+
+    if (shouldHydrateOrganizations && !hasFetchedOrganizationsRef.current) {
+      hasFetchedOrganizationsRef.current = true;
       void loadOrganizations();
     }
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [tenantOptions]);
 
   useEffect(() => {
     if (!tenantOptions.some(option => option.id === selectedTenantId)) {
@@ -246,8 +262,10 @@ export function useCatalog() {
     setSearchTerm(nextView.searchTerm);
     setSelectedName(nextView.selectedName || '');
     setSelectedNumber(nextView.selectedNumber || '');
+    setSelectedNumberOperator(nextView.selectedNumberOperator || 'contains');
     setSelectedCollection(nextView.selectedCollection || '');
     setSelectedRange(nextView.selectedRange || '');
+    setSelectedVariantGroup(nextView.selectedVariantGroup || '');
     setSelectedPriceMin(nextView.selectedPriceMin || '');
     setSelectedPriceMax(nextView.selectedPriceMax || '');
     setSelectedEan(nextView.selectedEan || '');
@@ -271,8 +289,10 @@ export function useCatalog() {
     searchTerm,
     selectedName,
     selectedNumber,
+    selectedNumberOperator,
     selectedCollection,
     selectedRange,
+    selectedVariantGroup,
     selectedPriceMin,
     selectedPriceMax,
     selectedEan,
@@ -301,8 +321,10 @@ export function useCatalog() {
         searchTerm,
         selectedName,
         selectedNumber,
+        selectedNumberOperator,
         selectedCollection,
         selectedRange,
+        selectedVariantGroup,
         selectedPriceMin,
         selectedPriceMax,
         selectedEan,
@@ -322,8 +344,10 @@ export function useCatalog() {
       searchTerm,
       selectedName,
       selectedNumber,
+      selectedNumberOperator,
       selectedCollection,
       selectedRange,
+      selectedVariantGroup,
       selectedPriceMin,
       selectedPriceMax,
       selectedEan,
@@ -346,8 +370,10 @@ export function useCatalog() {
     setSearchTerm(snapshot.searchTerm);
     setSelectedName(snapshot.selectedName || '');
     setSelectedNumber(snapshot.selectedNumber || '');
+    setSelectedNumberOperator(snapshot.selectedNumberOperator || 'contains');
     setSelectedCollection(snapshot.selectedCollection || '');
     setSelectedRange(snapshot.selectedRange || '');
+    setSelectedVariantGroup(snapshot.selectedVariantGroup || '');
     setSelectedPriceMin(snapshot.selectedPriceMin || '');
     setSelectedPriceMax(snapshot.selectedPriceMax || '');
     setSelectedEan(snapshot.selectedEan || '');
@@ -393,8 +419,10 @@ export function useCatalog() {
     setSearchTerm('');
     setSelectedName('');
     setSelectedNumber('');
+    setSelectedNumberOperator('contains');
     setSelectedCollection('');
     setSelectedRange('');
+    setSelectedVariantGroup('');
     setSelectedPriceMin('');
     setSelectedPriceMax('');
     setSelectedEan('');
@@ -438,11 +466,13 @@ export function useCatalog() {
     selectedProduct,
     setSelectedProduct,
     searchTerm,
-    selectedName,
-    selectedNumber,
-    selectedCollection,
-    selectedRange,
-    selectedPriceMin,
+      selectedName,
+      selectedNumber,
+      selectedNumberOperator,
+      selectedCollection,
+      selectedRange,
+      selectedVariantGroup,
+      selectedPriceMin,
     selectedPriceMax,
     selectedEan,
     selectedFlow,
@@ -451,8 +481,10 @@ export function useCatalog() {
     setSearchTerm,
     setSelectedName,
     setSelectedNumber,
+    setSelectedNumberOperator,
     setSelectedCollection,
     setSelectedRange,
+    setSelectedVariantGroup,
     setSelectedPriceMin,
     setSelectedPriceMax,
     setSelectedEan,
@@ -481,6 +513,7 @@ export function useCatalog() {
     setIsSettingsOpen,
     brandOptions: meta.brandOptions,
     rangeOptions: meta.rangeOptions,
+    variantGroupOptions: meta.variantGroupOptions,
     flowOptions: meta.flowOptions,
     finishOptions: meta.finishOptions,
     priceRange: meta.priceRange,
@@ -504,6 +537,8 @@ export function useCatalog() {
     settings,
     setSettings,
     setSettingsForTenant,
+    saveSettings,
+    settingsSaveState: saveState,
     tenantOptions,
     savedViews,
     savedViewName,
