@@ -1,10 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Check,
   ChevronLeft,
   ChevronRight,
   Copy,
-  Download,
   Eye,
   Languages,
   X,
@@ -13,7 +11,6 @@ import type { Product, ProductImage } from '../api/productService';
 import { cleanText, getPrimaryCategoryLabel, getVariantFinishLabel } from '../selectors/catalogSelectors';
 import { ProductContentTab } from './ProductContentTab';
 import { ProductVariantsPanel } from './ProductVariantsPanel';
-import { useToast } from '../../../shared/ui/toast';
 import { useConfirm } from '../../../shared/ui/ConfirmDialog';
 import {
   DEFAULT_LOCALES,
@@ -85,7 +82,7 @@ export function ProductModal({
   onLocaleChange,
   activeLocale,
   locales = DEFAULT_LOCALES,
-  onSave,
+  onSave: _onSave,
   onAddImage,
   onAddVariant,
   onNavigateBreadcrumb,
@@ -98,11 +95,8 @@ export function ProductModal({
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [activeVariantIndex, setActiveVariantIndex] = useState(0);
   const [activeTab, setActiveTab] = useState<SheetTab>('contenido');
-  const [saveState, setSaveState] = useState<'idle' | 'saved'>('idle');
   const [localLocale, setLocalLocale] = useState<LocaleCode>('ES');
   const [copiedSku, setCopiedSku] = useState('');
-  const [isExporting, setIsExporting] = useState(false);
-  const { showToast } = useToast();
   const confirm = useConfirm();
   const hasUnsavedChangesRef = useRef(false);
   const onPrevRef = useRef(onPrev);
@@ -111,7 +105,6 @@ export function ProductModal({
 
   const canEditVisibility = currentUserRole === 'admin' || currentUserRole === 'content_manager';
   const canEditStatus = canEditVisibility;
-  const canSave = canEditVisibility;
   const isVariantProduct = normalizeKey(product.type) === 'variant';
   const isGroupProduct = normalizeKey(product.type) === 'group' || Boolean((product as any).isVariantGroup);
   const variantSourceProduct = parentProduct && parentProduct.id !== product.id ? parentProduct : product;
@@ -198,7 +191,6 @@ export function ProductModal({
     setCurrentImageIndex(0);
     setActiveVariantIndex(0);
     setActiveTab('contenido');
-    setSaveState('idle');
     setDraft(initialDraft);
     setConfirmedDraft(initialDraft);
   }, [initialDraft, product.id]);
@@ -271,23 +263,6 @@ export function ProductModal({
     return () => window.removeEventListener('keydown', handler);
   }, []); // stable — all values accessed via refs
 
-  const handleSave = () => {
-    onSave?.({
-      description: draft.description,
-      ean: draft.ean,
-      baseRef: draft.baseRef,
-      visibleOnWeb: draft.visibleOnWeb,
-      price: draft.price.trim() ? Number(draft.price.replace(',', '.')) : undefined,
-      weight: draft.weight.trim() ? Number(draft.weight.replace(',', '.')) : undefined,
-      collection: draft.collection,
-      range: draft.range,
-      status: draft.status,
-    } as Partial<Product>);
-    setConfirmedDraft(draft);
-    setSaveState('saved');
-    window.setTimeout(() => setSaveState('idle'), 1800);
-  };
-
   const copySkuToClipboard = async (sku: string) => {
     try {
       await navigator.clipboard.writeText(sku);
@@ -303,42 +278,6 @@ export function ProductModal({
     const nextLocale = locales[(currentIndex + 1) % locales.length] || locales[0] || 'ES';
     if (!activeLocale) setLocalLocale(nextLocale as LocaleCode);
     onLocaleChange?.(nextLocale);
-  };
-
-  const exportPayload = () => {
-    setIsExporting(true);
-    try {
-      const payload = {
-        id: product.id, name: product.name, sku: productSku,
-        description: draft.description, status: draft.status,
-        visibleOnWeb: draft.visibleOnWeb, ean: draft.ean, baseRef: draft.baseRef,
-        price: draft.price, collection: draft.collection, range: draft.range,
-        images: images.map(image => ({ url: image.url, alt: image.alt })),
-        attachments: attachments.map((attachment: any) => ({
-          name: cleanText(attachment.name || attachment.fileName || 'Documento'),
-          url: attachment.downloadUrl || attachment.url,
-          type: attachment.type,
-        })),
-        categories: categoryIds.map((categoryId: string) => ({
-          id: categoryId,
-          label: cleanText(categoryLabelMap[categoryId] || categoryId),
-        })),
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = `${productSku || productName || 'producto'}.json`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-      showToast('Exportación completada', 'success');
-    } catch {
-      showToast('Error al exportar el producto', 'error');
-    } finally {
-      window.setTimeout(() => setIsExporting(false), 800);
-    }
   };
 
   const StatusIcon = productStatus.icon;

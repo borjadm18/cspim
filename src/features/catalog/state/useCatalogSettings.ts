@@ -47,7 +47,6 @@ export function useCatalogSettings(selectedTenantId: string) {
   const [settingsByTenant, setSettingsByTenant] = useState<Record<string, CatalogSettings>>(
     () => loadSettingsByTenant()
   );
-  const [hydratedTenantSettings, setHydratedTenantSettings] = useState<Record<string, boolean>>({});
   const [saveStateByTenant, setSaveStateByTenant] = useState<Record<string, 'idle' | 'saving' | 'saved' | 'error'>>({});
 
   useEffect(() => {
@@ -59,7 +58,6 @@ export function useCatalogSettings(selectedTenantId: string) {
     let cancelled = false;
 
     const hydrate = async () => {
-      setHydratedTenantSettings(prev => ({ ...prev, [selectedTenantId]: false }));
       const remote = await loadOrganizationSettings(selectedTenantId);
       if (cancelled) return;
 
@@ -72,8 +70,6 @@ export function useCatalogSettings(selectedTenantId: string) {
           }),
         }));
       }
-
-      setHydratedTenantSettings(prev => ({ ...prev, [selectedTenantId]: true }));
     };
 
     void hydrate();

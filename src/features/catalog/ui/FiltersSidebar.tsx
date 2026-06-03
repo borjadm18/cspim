@@ -85,15 +85,6 @@ const flattenTree = (nodes: CategoryTreeNode[], ancestors: string[] = []): Categ
     ];
   });
 
-const matchScore = (item: CategoryItem, term: string) => {
-  if (!term) return item.count;
-  const l = item.label.toLowerCase(), p = item.path.toLowerCase();
-  if (l === term || p === term) return 1000 + item.count;
-  if (l.startsWith(term) || p.startsWith(term)) return 500 + item.count;
-  if (l.includes(term) || p.includes(term)) return 100 + item.count;
-  return 0;
-};
-
 const formatPrice = (v: number) =>
   new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(Math.round(v));
 
@@ -310,8 +301,6 @@ export function FiltersSidebar({
   const [draftCollection, setDraftCollection] = useState(selectedCollection);
   const [draftEan, setDraftEan] = useState(selectedEan);
   const [draftAttr, setDraftAttr] = useState(selectedAttributeQuery);
-  const [categoryQuery, setCategoryQuery] = useState('');
-  const [showAllCategories, setShowAllCategories] = useState(false);
 
   useEffect(() => setDraftName(selectedName), [selectedName]);
   useEffect(() => setDraftNumber(selectedNumber), [selectedNumber]);
@@ -349,16 +338,6 @@ export function FiltersSidebar({
   );
   const selectedCategoryLabel =
     selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] || selectedCategory);
-
-  const visibleCategories = useMemo(() => {
-    const term = categoryQuery.trim().toLowerCase();
-    const source = term
-      ? categories.filter(c => c.label.toLowerCase().includes(term) || c.path.toLowerCase().includes(term))
-      : categories.filter(c => c.count > 0);
-    return [...source]
-      .sort((a, b) => matchScore(b, term) - matchScore(a, term) || b.count - a.count)
-      .slice(0, term ? 12 : showAllCategories ? 40 : 8);
-  }, [categoryQuery, categories, showAllCategories]);
 
   // ── Price slider ──────────────────────────────────────────────────────────
   const sliderMin = Number.isFinite(priceRange?.min) ? priceRange.min : 0;
