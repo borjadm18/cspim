@@ -69,7 +69,9 @@ export function CatalogSidebar({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">{children}</div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {children}
+      </div>
 
       <div className="border-t border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.9)_0%,rgba(248,250,252,0.98)_100%)] p-3">
         <SidebarContextMenu

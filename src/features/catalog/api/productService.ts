@@ -122,7 +122,7 @@ export const setCachedCatalogPage = (query: CatalogQueryParams, response: Catalo
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÃ‚ï¿½]/.test(text)) return text;
+  if (!/[\u00C3\u00C2\uFFFD]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));

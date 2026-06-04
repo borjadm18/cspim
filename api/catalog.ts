@@ -135,7 +135,7 @@ const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 120;
 const MEMORY_CACHE_TTL_MS = 5 * 60 * 1000;
 const SUPABASE_CACHE_TTL_MS = 30 * 60 * 1000;
-const SLIM_CACHE_TTL_MS = 25 * 60 * 1000;
+const SLIM_CACHE_TTL_MS = 50 * 60 * 1000;
 const REFRESH_GRACE_MS = 2 * 60 * 60 * 1000;
 const BLUESTONE_TIMEOUT_MS = 20_000;
 const BLUESTONE_ATTEMPTS = 4;
@@ -1287,14 +1287,14 @@ const buildSlimCatalogIndex = (tenant: TenantConfig, cacheKey: string): Promise<
   const promise = (async () => {
     const token = await getAccessToken(tenant);
     const baseUrl = getBaseUrl(tenant.env);
-    const nodeMap = await fetchCategoryNodes(tenant, token).catch(() => new Map<string, CategoryNodeRecord>());
+    const nodeMapPromise = fetchCategoryNodes(tenant, token).catch(() => new Map<string, CategoryNodeRecord>());
     const allProducts: Record<string, unknown>[] = [];
     let cursor: string | null = null;
 
     do {
       const body = cursor
-        ? { cursor, count: 100, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] }
-        : { count: 100, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] };
+        ? { cursor, count: 500, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] }
+        : { count: 500, views: [{ type: 'METADATA' }, { type: 'CATEGORIES' }, { type: 'ASSETS' }] };
 
       const response = await fetchWithRetry(`${baseUrl}/pim/products/cursor/views/all`, {
         method: 'POST',
@@ -1324,6 +1324,8 @@ const buildSlimCatalogIndex = (tenant: TenantConfig, cacheKey: string): Promise<
       allProducts.push(...batch);
       cursor = payload?.nextCursor || payload?.cursor || null;
     } while (cursor);
+
+    const nodeMap = await nodeMapPromise;
 
     const normalizedProducts = allProducts
       .map(product => {
@@ -1374,11 +1376,11 @@ const refreshCatalogIndex = (tenant: TenantConfig, cacheKey: string) => {
       const body = cursor
         ? {
             cursor,
-            count: 100,
+            count: 500,
             views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }],
           }
         : {
-            count: 100,
+            count: 500,
             views: [{ type: 'METADATA' }, { type: 'ATTRIBUTES' }, { type: 'ASSETS' }, { type: 'CATEGORIES' }],
           };
 

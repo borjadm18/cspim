@@ -14,7 +14,7 @@ import type {
 export const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃÂâ]/.test(text)) return text;
+  if (!/[\u00C3\u00C2\u00E2\uFFFD]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));

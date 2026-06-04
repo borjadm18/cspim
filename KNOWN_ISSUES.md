@@ -54,7 +54,7 @@ Estado:
 
 Síntoma:
 
-- textos como `GriferÃ­a`, `CatÃ¡logo`, `ContraseÃ±a`
+- textos como `Grifería`, `Catálogo`, `Contraseña` pueden reaparecer corruptos si entra contenido mal decodificado
 
 Causa:
 
@@ -62,7 +62,7 @@ Causa:
 
 Estado:
 
-- hay reparación parcial en varias capas
+- reparado en las superficies principales del catálogo
 - sigue siendo una zona sensible y hay que revisarla cada vez que aparezca
 
 ## 5. Artefactos de desarrollo en raíz

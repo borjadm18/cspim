@@ -1,5 +1,5 @@
 import { ChevronDown, Search, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CatalogAccessMode, TenantOption } from '../model/catalogTypes';
 import { UserMenu } from './UserMenu';
 
@@ -54,22 +54,10 @@ export function CatalogHeader({
   const [tenantSearch, setTenantSearch] = useState('');
   const [inputValue, setInputValue] = useState(searchTerm);
   const [logoError, setLogoError] = useState(false);
-  const skipDebounceRef = useRef(false);
 
   useEffect(() => {
-    skipDebounceRef.current = true;
     setInputValue(searchTerm);
   }, [searchTerm]);
-
-  useEffect(() => {
-    if (skipDebounceRef.current) {
-      skipDebounceRef.current = false;
-      return;
-    }
-
-    const timer = setTimeout(() => onSearchTermChange(inputValue), 250);
-    return () => clearTimeout(timer);
-  }, [inputValue, onSearchTermChange]);
 
   useEffect(() => {
     setLogoError(false);
@@ -86,6 +74,12 @@ export function CatalogHeader({
       return haystack.includes(query);
     });
   }, [tenantOptions, tenantSearch]);
+
+  const applySearch = () => {
+    const nextValue = inputValue.trim();
+    onSearchTermChange(nextValue);
+    onSearchSubmit(nextValue);
+  };
 
   return (
     <>
@@ -207,10 +201,17 @@ export function CatalogHeader({
                 value={inputValue}
                 onChange={event => setInputValue(event.target.value)}
                 onKeyDown={event => {
-                  if (event.key === 'Enter') onSearchSubmit(inputValue);
+                  if (event.key === 'Enter') applySearch();
                 }}
-                className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-12 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
+                className="h-14 w-full rounded-2xl border border-slate-200 bg-white pl-11 pr-28 text-[15px] text-slate-900 outline-none transition focus:border-[color:var(--catalog-accent)] focus:ring-4 focus:ring-[color:var(--catalog-accent-soft)]"
               />
+              <button
+                type="button"
+                onClick={applySearch}
+                className="absolute right-12 top-1/2 -translate-y-1/2 rounded-xl bg-[color:var(--catalog-accent)] px-3.5 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-white transition hover:opacity-90"
+              >
+                Buscar
+              </button>
               {inputValue.trim().length > 0 ? (
                 <button
                   type="button"

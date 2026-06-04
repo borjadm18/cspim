@@ -46,7 +46,7 @@ const sendJson = (statusCode: number, body: unknown, headers: Record<string, str
 const cleanText = (value: unknown) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
+  if (!/[\u00C3\u00C2\uFFFD]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
@@ -146,4 +146,3 @@ export async function GET(request: Request) {
 export async function OPTIONS(request: Request) {
   return new Response(null, { status: 200, headers: getCorsHeaders(request) });
 }
-

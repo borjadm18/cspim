@@ -22,6 +22,7 @@ const CATALOG_PREVIEW_ASSETS_PER_PRODUCT = 6;
 const DEFAULT_PAGE_SIZE = 30;
 const MAX_PAGE_SIZE = 120;
 const organizationSettingsPath = path.join(rootDir, '.content-store-data', 'organization-settings.json');
+const brandingAssetsDir = path.join(rootDir, '.content-store-data', 'branding');
 const catalogDiskCachePath = path.join(rootDir, '.content-store-data', 'catalog-cache.json');
 const localProductsPath = path.join(rootDir, 'src', 'dev', 'all-products-cursor.json');
 const organizationSettingsCache = new Map();
@@ -31,18 +32,53 @@ const DEFAULT_SETTINGS = {
   pageSize: 30,
   density: 'comfortable',
   logoUrl: undefined,
+  faviconUrl: undefined,
+  loginHeroImageUrl: undefined,
+  loginEyebrow: undefined,
+  loginHeading: undefined,
+  loginBody: undefined,
   paletteId: 'navy',
 };
 
 const ensureStorageDir = async () => {
   await fs.mkdir(path.dirname(organizationSettingsPath), { recursive: true });
+  await fs.mkdir(brandingAssetsDir, { recursive: true });
+};
+
+const isAllowedAssetUrl = value => {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    const parsed = new URL(value.trim());
+    return (
+      parsed.protocol === 'https:' ||
+      (parsed.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(parsed.hostname))
+    );
+  } catch {
+    return false;
+  }
+};
+
+const normalizeShortText = (value, maxLength) => {
+  if (typeof value !== 'string') return undefined;
+  const next = cleanText(value).trim();
+  if (!next) return undefined;
+  return next.slice(0, maxLength);
 };
 
 const normalizeSettings = settings => ({
   pageSize: typeof settings?.pageSize === 'number' ? settings.pageSize : DEFAULT_SETTINGS.pageSize,
   density: settings?.density === 'compact' ? 'compact' : 'comfortable',
-  logoUrl: typeof settings?.logoUrl === 'string' && settings.logoUrl.trim() ? settings.logoUrl.trim() : undefined,
+  logoUrl: isAllowedAssetUrl(settings?.logoUrl) ? settings.logoUrl.trim() : undefined,
+  faviconUrl: isAllowedAssetUrl(settings?.faviconUrl) ? settings.faviconUrl.trim() : undefined,
+  loginHeroImageUrl: isAllowedAssetUrl(settings?.loginHeroImageUrl) ? settings.loginHeroImageUrl.trim() : undefined,
+  loginEyebrow: normalizeShortText(settings?.loginEyebrow, 48),
+  loginHeading: normalizeShortText(settings?.loginHeading, 140),
+  loginBody: normalizeShortText(settings?.loginBody, 320),
   paletteId: typeof settings?.paletteId === 'string' && settings.paletteId.trim() ? settings.paletteId.trim() : DEFAULT_SETTINGS.paletteId,
+  customAccentHex:
+    typeof settings?.customAccentHex === 'string' && /^#[0-9a-fA-F]{6}$/.test(settings.customAccentHex.trim())
+      ? settings.customAccentHex.trim()
+      : undefined,
 });
 
 const loadOrganizationSettings = async () => {
@@ -174,7 +210,7 @@ const parsePublicOrganizations = () => {
 const cleanText = (value) => {
   if (value === null || value === undefined) return '';
   const text = String(value);
-  if (!/[ÃƒÆ’Ãƒâ€šÃ¯Â¿Â½]/.test(text)) return text;
+  if (!/[\u00C3\u00C2\uFFFD]/.test(text)) return text;
 
   try {
     const bytes = Uint8Array.from(text, char => char.charCodeAt(0));
@@ -1694,6 +1730,14 @@ const sendJson = (res, statusCode, body) => {
   res.end(JSON.stringify(body));
 };
 
+const sendBuffer = (res, statusCode, body, headers = {}) => {
+  res.writeHead(statusCode, {
+    ...corsHeaders,
+    ...headers,
+  });
+  res.end(body);
+};
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1:3001'}`);
 
@@ -1744,6 +1788,80 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+  }
+
+  if (url.pathname === '/api/organization-assets') {
+    if (req.method === 'POST') {
+      try {
+        const request = new Request(`http://127.0.0.1:3001${url.pathname}`, {
+          method: 'POST',
+          headers: req.headers,
+          body: req,
+          duplex: 'half',
+        });
+
+        const formData = await request.formData();
+        const tenantId = cleanText(String(formData.get('tenantId') || DEFAULT_TENANT)).trim() || DEFAULT_TENANT;
+        const kind = cleanText(String(formData.get('kind') || 'asset')).trim() || 'asset';
+        const file = formData.get('file');
+
+        if (!(file instanceof File)) {
+          sendJson(res, 400, { error: 'Missing file upload' });
+          return;
+        }
+
+        const safeTenant = tenantId.replace(/[^a-zA-Z0-9._-]+/g, '-');
+        const safeKind = kind.replace(/[^a-zA-Z0-9._-]+/g, '-');
+        const baseName = path.parse(file.name || 'asset').name.replace(/[^a-zA-Z0-9._-]+/g, '-');
+        const extension = (path.extname(file.name || '').replace('.', '') || 'bin').replace(/[^a-zA-Z0-9]+/g, '');
+        const fileName = `${Date.now()}-${baseName || 'asset'}.${extension || 'bin'}`;
+        const targetDir = path.join(brandingAssetsDir, safeTenant, safeKind);
+        const targetPath = path.join(targetDir, fileName);
+
+        await fs.mkdir(targetDir, { recursive: true });
+        await fs.writeFile(targetPath, Buffer.from(await file.arrayBuffer()));
+
+        const publicPath = `/api/organization-assets/${safeTenant}/${safeKind}/${fileName}`;
+        sendJson(res, 200, { url: `http://127.0.0.1:3001${publicPath}`, path: publicPath });
+      } catch (error) {
+        sendJson(res, 500, {
+          error: 'Failed to upload organization asset',
+          message: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+      return;
+    }
+
+    sendJson(res, 405, { error: 'Method not allowed' });
+    return;
+  }
+
+  if (url.pathname.startsWith('/api/organization-assets/')) {
+    try {
+      const relativePath = decodeURIComponent(url.pathname.replace('/api/organization-assets/', ''));
+      const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
+      const assetPath = path.join(brandingAssetsDir, normalized);
+      const fileBuffer = await fs.readFile(assetPath);
+      const extension = path.extname(assetPath).toLowerCase();
+      const contentType =
+        extension === '.png' ? 'image/png' :
+        extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' :
+        extension === '.webp' ? 'image/webp' :
+        extension === '.svg' ? 'image/svg+xml' :
+        extension === '.ico' ? 'image/x-icon' :
+        'application/octet-stream';
+
+      sendBuffer(res, 200, fileBuffer, {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=3600',
+      });
+    } catch (error) {
+      sendJson(res, 404, {
+        error: 'Organization asset not found',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+    return;
   }
 
   if (url.pathname === '/api/local-products') {

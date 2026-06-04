@@ -17,8 +17,22 @@ export const DEFAULT_SETTINGS: CatalogSettings = {
 
 const SETTINGS_BY_TENANT_KEY = 'content-store.settings-by-tenant.v1';
 
-const keepRemoteAssetUrl = (value: unknown) =>
-  typeof value === 'string' && value.trim().startsWith('https://') ? value.trim() : undefined;
+const keepRemoteAssetUrl = (value: unknown) => {
+  if (typeof value !== 'string') return undefined;
+  const next = value.trim();
+  if (!next) return undefined;
+
+  try {
+    const parsed = new URL(next);
+    const isHttps = parsed.protocol === 'https:';
+    const isLocalHttp =
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+    return isHttps || isLocalHttp ? next : undefined;
+  } catch {
+    return undefined;
+  }
+};
 
 const normalizePersistedSettings = (settings: CatalogSettings | null | undefined): CatalogSettings => ({
   ...DEFAULT_SETTINGS,

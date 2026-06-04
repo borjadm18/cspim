@@ -33,10 +33,26 @@ const EMPTY_META: CatalogPageMeta = {
   mixedMediaCount: 0,
 };
 
+const IN_FLIGHT_PAGE_REQUESTS = new Map<string, Promise<CatalogPageResponse>>();
+
 const filterVisibleProducts = (response: CatalogPageResponse): CatalogPageResponse => ({
   ...response,
   products: response.products.filter(product => !isTestProduct(product)),
 });
+
+const loadCatalogResponse = (query: CatalogQueryParams, queryKey: string) => {
+  const pending = IN_FLIGHT_PAGE_REQUESTS.get(queryKey);
+  if (pending) {
+    return pending;
+  }
+
+  const request = fetchCatalogPage(query).finally(() => {
+    IN_FLIGHT_PAGE_REQUESTS.delete(queryKey);
+  });
+
+  IN_FLIGHT_PAGE_REQUESTS.set(queryKey, request);
+  return request;
+};
 
 export function useProductFetcher(query: CatalogQueryParams) {
   const [products, setProducts] = useState<Product[]>([]);
@@ -61,7 +77,7 @@ export function useProductFetcher(query: CatalogQueryParams) {
       }
 
       setError(null);
-      const response = filterVisibleProducts(await fetchCatalogPage(query));
+      const response = filterVisibleProducts(await loadCatalogResponse(query, queryKey));
       if (requestTokenRef.current !== token) return;
 
       setProducts(response.products);

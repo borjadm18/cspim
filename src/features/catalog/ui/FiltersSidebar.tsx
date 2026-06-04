@@ -85,10 +85,8 @@ const flattenTree = (nodes: CategoryTreeNode[], ancestors: string[] = []): Categ
     ];
   });
 
-const formatPrice = (v: number) =>
-  new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(Math.round(v));
-
-// ── Primitives ───────────────────────────────────────────────────────────────
+const formatPrice = (value: number) =>
+  new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(Math.round(value));
 
 const FilterInput = (props: InputHTMLAttributes<HTMLInputElement>) => (
   <input
@@ -108,8 +106,6 @@ const SectionLabel = ({ children }: { children: ReactNode }) => (
   <p className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-slate-500">{children}</p>
 );
 
-// ── Category Tree ────────────────────────────────────────────────────────────
-
 function CategoryTreeItem({
   node,
   depth = 0,
@@ -123,9 +119,9 @@ function CategoryTreeItem({
 }) {
   const isActive = selectedCategory === node.id;
   const hasChildren = node.children.length > 0;
-  const childHasActive = hasChildren && (
-    node.children.some(c => c.id === selectedCategory || c.children.some(gc => gc.id === selectedCategory))
-  );
+  const childHasActive =
+    hasChildren &&
+    node.children.some(child => child.id === selectedCategory || child.children.some(grandchild => grandchild.id === selectedCategory));
   const [expanded, setExpanded] = useState(depth === 0 || childHasActive);
 
   return (
@@ -136,7 +132,7 @@ function CategoryTreeItem({
       >
         <button
           type="button"
-          onClick={() => hasChildren && setExpanded(v => !v)}
+          onClick={() => hasChildren && setExpanded(current => !current)}
           className={`flex h-6 w-6 shrink-0 items-center justify-center text-slate-400 transition ${!hasChildren ? 'invisible' : ''}`}
           tabIndex={hasChildren ? 0 : -1}
           aria-label={expanded ? 'Colapsar' : 'Expandir'}
@@ -154,7 +150,7 @@ function CategoryTreeItem({
           <span className="ml-2 shrink-0 text-[11px] text-slate-400">{node.count}</span>
         </button>
       </div>
-      {hasChildren && expanded && (
+      {hasChildren && expanded ? (
         <div>
           {node.children.map(child => (
             <CategoryTreeItem
@@ -166,12 +162,10 @@ function CategoryTreeItem({
             />
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
-
-// ── Collapsible Section ──────────────────────────────────────────────────────
 
 function Section({
   title,
@@ -194,25 +188,19 @@ function Section({
     <div className="border-b border-slate-100 last:border-none">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => setOpen(current => !current)}
         className="flex w-full items-center justify-between gap-2 py-3.5 text-left"
       >
         <span className="flex items-center gap-2">
           <span className="text-[10.5px] font-semibold uppercase tracking-[0.22em] text-slate-700">{title}</span>
-          {active && (
-            <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--catalog-accent)]" />
-          )}
+          {active ? <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--catalog-accent)]" /> : null}
         </span>
-        <ChevronDown
-          className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`}
-        />
+        <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open && <div className="pb-4 space-y-3">{children}</div>}
+      {open ? <div className="space-y-3 pb-4">{children}</div> : null}
     </div>
   );
 }
-
-// ── Checkbox row ─────────────────────────────────────────────────────────────
 
 function CheckRow({
   checked,
@@ -234,14 +222,10 @@ function CheckRow({
         className="h-4 w-4 rounded border-slate-300 accent-[color:var(--catalog-accent)]"
       />
       <span className="flex-1 text-sm text-slate-700">{label}</span>
-      {count !== undefined && (
-        <span className="text-[11px] font-medium text-slate-400">{count}</span>
-      )}
+      {count !== undefined ? <span className="text-[11px] font-medium text-slate-400">{count}</span> : null}
     </label>
   );
 }
-
-// ── Main component ────────────────────────────────────────────────────────────
 
 export function FiltersSidebar({
   products = [],
@@ -294,7 +278,6 @@ export function FiltersSidebar({
   onClearFilters,
   embedded = false,
 }: FiltersSidebarProps) {
-  // ── Draft state for text inputs (apply on Enter or button) ────────────────
   const [draftName, setDraftName] = useState(selectedName);
   const [draftNumber, setDraftNumber] = useState(selectedNumber);
   const [draftNumberOp, setDraftNumberOp] = useState<TextMatchOperator>(selectedNumberOperator);
@@ -326,43 +309,56 @@ export function FiltersSidebar({
     draftEan !== selectedEan ||
     draftAttr !== selectedAttributeQuery;
 
-  const handleEnter: KeyboardEventHandler<HTMLInputElement> = e => {
-    if (e.key === 'Enter') { e.preventDefault(); applyDrafts(); }
+  const handleEnter: KeyboardEventHandler<HTMLInputElement> = event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      applyDrafts();
+    }
   };
 
-  // ── Category logic ────────────────────────────────────────────────────────
   const categories = useMemo(() => flattenTree(categoryTree), [categoryTree]);
   const categoryMap = useMemo(
-    () => Object.fromEntries(categories.map(c => [c.id, c.path])),
+    () => Object.fromEntries(categories.map(category => [category.id, category.path])),
     [categories]
   );
   const selectedCategoryLabel =
     selectedCategory === 'all' ? null : cleanText(categoryMap[selectedCategory] || selectedCategory);
 
-  // ── Price slider ──────────────────────────────────────────────────────────
   const sliderMin = Number.isFinite(priceRange?.min) ? priceRange.min : 0;
   const sliderMax = Number.isFinite(priceRange?.max) ? priceRange.max : 0;
   const hasPriceRange = sliderMax > sliderMin;
-  const safeMin = Number.isFinite(Number(selectedPriceMin)) && selectedPriceMin.trim()
-    ? Math.max(sliderMin, Number(selectedPriceMin)) : sliderMin;
-  const safeMax = Number.isFinite(Number(selectedPriceMax)) && selectedPriceMax.trim()
-    ? Math.min(sliderMax, Number(selectedPriceMax)) : sliderMax;
+  const safeMin =
+    Number.isFinite(Number(selectedPriceMin)) && selectedPriceMin.trim()
+      ? Math.max(sliderMin, Number(selectedPriceMin))
+      : sliderMin;
+  const safeMax =
+    Number.isFinite(Number(selectedPriceMax)) && selectedPriceMax.trim()
+      ? Math.min(sliderMax, Number(selectedPriceMax))
+      : sliderMax;
   const range = Math.max(sliderMax - sliderMin, 1);
   const leftPct = ((safeMin - sliderMin) / range) * 100;
   const rightPct = ((safeMax - sliderMin) / range) * 100;
 
-  // ── Active filter count ───────────────────────────────────────────────────
   const activeFilterCount = [
-    selectedName.trim(), selectedNumber.trim(), selectedCollection.trim(),
-    selectedRange.trim(), selectedVariantGroup.trim(), selectedPriceMin.trim(),
-    selectedPriceMax.trim(), selectedEan.trim(), selectedFlow.trim(),
-    selectedFinish.trim(), selectedAttributeQuery.trim(),
-    selectedBrand !== 'all', selectedCategory !== 'all',
-    selectedType !== 'all', selectedStatus !== 'all',
-    selectedMediaFilter !== 'all', selectedQuickFilter !== 'all',
+    selectedName.trim(),
+    selectedNumber.trim(),
+    selectedCollection.trim(),
+    selectedRange.trim(),
+    selectedVariantGroup.trim(),
+    selectedPriceMin.trim(),
+    selectedPriceMax.trim(),
+    selectedEan.trim(),
+    selectedFlow.trim(),
+    selectedFinish.trim(),
+    selectedAttributeQuery.trim(),
+    selectedBrand !== 'all',
+    selectedCategory !== 'all',
+    selectedType !== 'all',
+    selectedStatus !== 'all',
+    selectedMediaFilter !== 'all',
+    selectedQuickFilter !== 'all',
   ].filter(Boolean).length;
 
-  // ── Content availability helpers ─────────────────────────────────────────
   const contentFilters: { value: MediaFilter; label: string }[] = [
     { value: 'with-assets', label: 'Con imagen' },
     { value: 'without-assets', label: 'Sin imagen' },
@@ -377,15 +373,14 @@ export function FiltersSidebar({
 
   return (
     <div className={wrapper}>
-      {/* ── Header ── */}
       <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
         <div className="flex items-center gap-2.5">
           <h2 className="text-sm font-semibold text-slate-800">Filtros</h2>
-          {activeFilterCount > 0 && (
+          {activeFilterCount > 0 ? (
             <span className="rounded-full bg-[color:var(--catalog-accent-soft)] px-2 py-0.5 text-[10px] font-semibold text-[color:var(--catalog-accent)]">
               {activeFilterCount}
             </span>
-          )}
+          ) : null}
         </div>
         <button
           type="button"
@@ -396,27 +391,19 @@ export function FiltersSidebar({
         </button>
       </div>
 
-      {/* ── Summary ── */}
       <div className="border-b border-slate-100 px-5 py-3">
         <p className="text-xs text-slate-500">
           <span className="font-semibold text-slate-700">{summaryProductsCount ?? products.length}</span> productos
           {' · '}
           <span className="font-semibold text-slate-700">
-            {summaryWithImagesCount ?? products.filter(p => (p.images?.length || 0) > 0).length}
+            {summaryWithImagesCount ?? products.filter(product => (product.images?.length || 0) > 0).length}
           </span>{' '}
           con imagen
         </p>
       </div>
 
-      {/* ── Sections ── */}
       <div className="divide-y divide-slate-100 px-5">
-
-        {/* Búsqueda rápida */}
-        <Section
-          title="Búsqueda rápida"
-          defaultOpen
-          active={!!(selectedName || selectedNumber || selectedEan)}
-        >
+        <Section title="Búsqueda rápida" defaultOpen active={!!(selectedName || selectedNumber || selectedEan)}>
           <div className="space-y-3">
             <div>
               <SectionLabel>Nombre</SectionLabel>
@@ -424,7 +411,7 @@ export function FiltersSidebar({
                 <FilterInput
                   type="text"
                   value={draftName}
-                  onChange={e => setDraftName(e.target.value)}
+                  onChange={event => setDraftName(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="Filtrar por nombre..."
                 />
@@ -436,18 +423,18 @@ export function FiltersSidebar({
               <div className="mt-1.5 flex gap-2">
                 <select
                   value={draftNumberOp}
-                  onChange={e => setDraftNumberOp(e.target.value as TextMatchOperator)}
+                  onChange={event => setDraftNumberOp(event.target.value as TextMatchOperator)}
                   className="h-10 w-32 shrink-0 rounded-xl border border-slate-200 bg-white px-2.5 text-xs text-slate-700 outline-none focus:border-[color:var(--catalog-accent)]"
                 >
-                  <option value="contains">Contains</option>
-                  <option value="is">Is</option>
-                  <option value="starts_with">Starts with</option>
-                  <option value="is_not">Is not</option>
+                  <option value="contains">CONTAINS</option>
+                  <option value="is">IS</option>
+                  <option value="starts_with">STARTS WITH</option>
+                  <option value="is_not">IS NOT</option>
                 </select>
                 <FilterInput
                   type="text"
                   value={draftNumber}
-                  onChange={e => setDraftNumber(e.target.value)}
+                  onChange={event => setDraftNumber(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="SKU..."
                 />
@@ -460,14 +447,14 @@ export function FiltersSidebar({
                 <FilterInput
                   type="text"
                   value={draftEan}
-                  onChange={e => setDraftEan(e.target.value)}
+                  onChange={event => setDraftEan(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="EAN..."
                 />
               </div>
             </div>
 
-            {draftsDirty && (
+            {draftsDirty ? (
               <button
                 type="button"
                 onClick={applyDrafts}
@@ -475,14 +462,13 @@ export function FiltersSidebar({
               >
                 Aplicar búsqueda
               </button>
-            )}
+            ) : null}
           </div>
         </Section>
 
-        {/* Categorías */}
         <Section title="Categorías" active={selectedCategory !== 'all'} defaultOpen>
           <div className="space-y-1">
-            {selectedCategoryLabel && (
+            {selectedCategoryLabel ? (
               <div className="mb-2 flex items-center justify-between rounded-lg bg-[color:var(--catalog-accent-soft)]/60 px-3 py-2">
                 <span className="truncate text-xs font-medium text-[color:var(--catalog-accent)]">
                   {selectedCategoryLabel}
@@ -495,7 +481,7 @@ export function FiltersSidebar({
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-            )}
+            ) : null}
 
             {categoryTree.length > 0 ? (
               categoryTree.map(node => (
@@ -513,10 +499,19 @@ export function FiltersSidebar({
           </div>
         </Section>
 
-        {/* Comercial */}
         <Section
           title="Comercial"
-          active={!!(selectedCollection || selectedRange || selectedVariantGroup || selectedFlow || selectedFinish || selectedPriceMin || selectedPriceMax)}
+          active={
+            !!(
+              selectedCollection ||
+              selectedRange ||
+              selectedVariantGroup ||
+              selectedFlow ||
+              selectedFinish ||
+              selectedPriceMin ||
+              selectedPriceMax
+            )
+          }
         >
           <div className="space-y-4">
             <div>
@@ -525,73 +520,78 @@ export function FiltersSidebar({
                 <FilterInput
                   type="text"
                   value={draftCollection}
-                  onChange={e => setDraftCollection(e.target.value)}
+                  onChange={event => setDraftCollection(event.target.value)}
                   onKeyDown={handleEnter}
                   placeholder="Filtrar por colección..."
                 />
               </div>
             </div>
 
-            {rangeOptions.length > 0 && (
+            {rangeOptions.length > 0 ? (
               <div>
                 <SectionLabel>Gama</SectionLabel>
                 <div className="mt-1.5">
-                  <FilterSelect value={selectedRange} onChange={e => onRangeChange(e.target.value)}>
+                  <FilterSelect value={selectedRange} onChange={event => onRangeChange(event.target.value)}>
                     <option value="">Todas las gamas</option>
-                    {rangeOptions.map(o => (
-                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    {rangeOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label} ({option.count})
+                      </option>
                     ))}
                   </FilterSelect>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {finishOptions.length > 0 && (
+            {finishOptions.length > 0 ? (
               <div>
                 <SectionLabel>Acabado</SectionLabel>
-                <div className="mt-2 space-y-0.5 max-h-48 overflow-y-auto">
-                  {finishOptions.map(o => (
-                    <CheckRow
-                      key={o.id}
-                      checked={selectedFinish === o.id}
-                      label={o.label}
-                      count={o.count}
-                      onChange={() => onFinishChange(selectedFinish === o.id ? '' : o.id)}
-                    />
-                  ))}
+                <div className="mt-1.5">
+                  <FilterSelect value={selectedFinish} onChange={event => onFinishChange(event.target.value)}>
+                    <option value="">Todos los acabados</option>
+                    {finishOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label} ({option.count})
+                      </option>
+                    ))}
+                  </FilterSelect>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {flowOptions.length > 0 && (
+            {flowOptions.length > 0 ? (
               <div>
                 <SectionLabel>Caudal</SectionLabel>
                 <div className="mt-1.5">
-                  <FilterSelect value={selectedFlow} onChange={e => onFlowChange(e.target.value)}>
+                  <FilterSelect value={selectedFlow} onChange={event => onFlowChange(event.target.value)}>
                     <option value="">Todos los caudales</option>
-                    {flowOptions.map(o => (
-                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    {flowOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label} ({option.count})
+                      </option>
                     ))}
                   </FilterSelect>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {variantGroupOptions.length > 0 && (
+            {variantGroupOptions.length > 0 ? (
               <div>
                 <SectionLabel>Variant group</SectionLabel>
                 <div className="mt-1.5">
-                  <FilterSelect value={selectedVariantGroup} onChange={e => onVariantGroupChange(e.target.value)}>
+                  <FilterSelect value={selectedVariantGroup} onChange={event => onVariantGroupChange(event.target.value)}>
                     <option value="">Todos</option>
-                    {variantGroupOptions.map(o => (
-                      <option key={o.id} value={o.id}>{o.label} ({o.count})</option>
+                    {variantGroupOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label} ({option.count})
+                      </option>
                     ))}
                   </FilterSelect>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {hasPriceRange && (
+            {hasPriceRange ? (
               <div>
                 <SectionLabel>Precio</SectionLabel>
                 <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-3.5">
@@ -600,18 +600,28 @@ export function FiltersSidebar({
                     <span>{formatPrice(safeMax)} €</span>
                   </div>
                   <div className="relative h-5">
-                    <div className="absolute top-1/2 left-0 right-0 h-1.5 -translate-y-1/2 rounded-full bg-slate-200" />
+                    <div className="absolute left-0 right-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-slate-200" />
                     <div
                       className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-[color:var(--catalog-accent)]"
                       style={{ left: `${leftPct}%`, width: `${Math.max(rightPct - leftPct, 0)}%` }}
                     />
-                    <input type="range" min={sliderMin} max={sliderMax} step={1} value={safeMin}
-                      onChange={e => onPriceMinChange(String(Math.min(Number(e.target.value), safeMax)))}
+                    <input
+                      type="range"
+                      min={sliderMin}
+                      max={sliderMax}
+                      step={1}
+                      value={safeMin}
+                      onChange={event => onPriceMinChange(String(Math.min(Number(event.target.value), safeMax)))}
                       className="pointer-events-none absolute left-0 top-1/2 h-1.5 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-md"
                       aria-label="Precio mínimo"
                     />
-                    <input type="range" min={sliderMin} max={sliderMax} step={1} value={safeMax}
-                      onChange={e => onPriceMaxChange(String(Math.max(Number(e.target.value), safeMin)))}
+                    <input
+                      type="range"
+                      min={sliderMin}
+                      max={sliderMax}
+                      step={1}
+                      value={safeMax}
+                      onChange={event => onPriceMaxChange(String(Math.max(Number(event.target.value), safeMin)))}
                       className="pointer-events-none absolute left-0 top-1/2 h-1.5 w-full -translate-y-1/2 appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-[color:var(--catalog-accent)] [&::-webkit-slider-thumb]:shadow-md"
                       aria-label="Precio máximo"
                     />
@@ -622,9 +632,9 @@ export function FiltersSidebar({
                   </div>
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {draftsDirty && (
+            {draftsDirty ? (
               <button
                 type="button"
                 onClick={applyDrafts}
@@ -632,21 +642,24 @@ export function FiltersSidebar({
               >
                 Aplicar
               </button>
-            )}
+            ) : null}
           </div>
         </Section>
 
-        {/* Tipo de producto */}
         <Section title="Tipo de producto" active={selectedType !== 'all'}>
           <div className="space-y-0.5">
-            {[{ id: 'single', label: 'Simple' }, { id: 'variant', label: 'Con acabados' }, { id: 'bundle', label: 'Bundle' }].map(tile => {
-              const opt = typeOptions.find(o => o.id === tile.id);
+            {[
+              { id: 'single', label: 'Simple' },
+              { id: 'variant', label: 'Con acabados' },
+              { id: 'bundle', label: 'Bundle' },
+            ].map(tile => {
+              const option = typeOptions.find(typeOption => typeOption.id === tile.id);
               return (
                 <CheckRow
                   key={tile.id}
                   checked={selectedType === tile.id}
                   label={tile.label}
-                  count={opt?.count}
+                  count={option?.count}
                   onChange={() => onTypeChange(selectedType === tile.id ? 'all' : tile.id)}
                 />
               );
@@ -654,21 +667,19 @@ export function FiltersSidebar({
           </div>
         </Section>
 
-        {/* Contenido disponible */}
         <Section title="Contenido disponible" active={selectedMediaFilter !== 'all'}>
           <div className="space-y-0.5">
-            {contentFilters.map(f => (
+            {contentFilters.map(filter => (
               <CheckRow
-                key={f.value}
-                checked={selectedMediaFilter === f.value}
-                label={f.label}
-                onChange={() => onMediaFilterChange(selectedMediaFilter === f.value ? 'all' : f.value)}
+                key={filter.value}
+                checked={selectedMediaFilter === filter.value}
+                label={filter.label}
+                onChange={() => onMediaFilterChange(selectedMediaFilter === filter.value ? 'all' : filter.value)}
               />
             ))}
           </div>
         </Section>
 
-        {/* Estado editorial */}
         <Section title="Estado editorial" active={selectedStatus !== 'all'}>
           <div className="space-y-0.5">
             {[
@@ -677,13 +688,13 @@ export function FiltersSidebar({
               { id: 'published', label: 'Publicado' },
               { id: 'archived', label: 'Archivado' },
             ].map(tile => {
-              const opt = statusOptions.find(o => o.id === tile.id);
+              const option = statusOptions.find(statusOption => statusOption.id === tile.id);
               return (
                 <CheckRow
                   key={tile.id}
                   checked={selectedStatus === tile.id}
                   label={tile.label}
-                  count={opt?.count}
+                  count={option?.count}
                   onChange={() => onStatusChange(selectedStatus === tile.id ? 'all' : tile.id)}
                 />
               );
@@ -691,7 +702,6 @@ export function FiltersSidebar({
           </div>
         </Section>
 
-        {/* Atributos técnicos */}
         <Section title="Atributos técnicos" active={!!selectedAttributeQuery}>
           <div>
             <div className="relative">
@@ -699,22 +709,25 @@ export function FiltersSidebar({
               <FilterInput
                 type="text"
                 value={draftAttr}
-                onChange={e => setDraftAttr(e.target.value)}
+                onChange={event => setDraftAttr(event.target.value)}
                 onKeyDown={handleEnter}
                 placeholder="Buscar atributo o valor..."
                 className="pl-9 pr-8"
               />
-              {draftAttr && (
+              {draftAttr ? (
                 <button
                   type="button"
-                  onClick={() => { setDraftAttr(''); onAttributeQueryChange(''); }}
+                  onClick={() => {
+                    setDraftAttr('');
+                    onAttributeQueryChange('');
+                  }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
-              )}
+              ) : null}
             </div>
-            {draftAttr !== selectedAttributeQuery && draftAttr.trim() && (
+            {draftAttr !== selectedAttributeQuery && draftAttr.trim() ? (
               <button
                 type="button"
                 onClick={applyDrafts}
@@ -722,22 +735,22 @@ export function FiltersSidebar({
               >
                 Buscar
               </button>
-            )}
+            ) : null}
           </div>
         </Section>
 
-        {/* Marca */}
-        {brandOptions.length > 0 && (
+        {brandOptions.length > 0 ? (
           <Section title="Marca" active={selectedBrand !== 'all'}>
-            <FilterSelect value={selectedBrand} onChange={e => onBrandChange(e.target.value)}>
+            <FilterSelect value={selectedBrand} onChange={event => onBrandChange(event.target.value)}>
               <option value="all">Todas las marcas</option>
-              {brandOptions.map(b => (
-                <option key={b.id} value={b.id}>{b.label} ({b.count})</option>
+              {brandOptions.map(brand => (
+                <option key={brand.id} value={brand.id}>
+                  {brand.label} ({brand.count})
+                </option>
               ))}
             </FilterSelect>
           </Section>
-        )}
-
+        ) : null}
       </div>
     </div>
   );
